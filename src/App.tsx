@@ -30,6 +30,8 @@ export function App() {
   const [result, setResult] = useState<AnalyzeResult | null>(null)
   const [concurrency, setConcurrency] = useState(32)
   const [notesOpen, setNotesOpen] = useState(false)
+  /** 疑似漏配别名的告警是否已被关掉。换仓库时重置——新仓库的情况是新的 */
+  const [aliasWarnDismissed, setAliasWarnDismissed] = useState(false)
   /** 侧栏、画布、分析面板共享的选中文件——双向联动的单一数据源 */
   const [selected, setSelected] = useState<string | null>(null)
   /**
@@ -58,6 +60,7 @@ export function App() {
       setScan(null)
       setProgress(null)
       setNotesOpen(false)
+      setAliasWarnDismissed(false)
       // 换仓库必须清筛选：上一个仓库的目录名在新仓库里通常一个都不存在，
       // 留着就是打开后看到一片空
       setFilter(EMPTY_FILTER)
@@ -202,11 +205,27 @@ export function App() {
             </div>
           )}
 
-          {ready && result.stats.externalAliasLike > 0 && (
+          {/*
+            可关闭。这条告警是**信息**不是**故障**——图能用，只是可能缺几条边。
+            让它常驻在主视图顶上，等于把一条低优先级的信息永久占住一整行，
+            而用户第一眼看完之后它再也不提供新东西。
+            关掉之后完整清单还在「分析 → 解析报告」里，随时能查。
+          */}
+          {ready && result.stats.externalAliasLike > 0 && !aliasWarnDismissed && (
             <div className="banner">
               <span className="warn">⚠</span>
-              {result.stats.externalAliasLike} 个导入像是路径别名却没匹配上 tsconfig 的 paths，
-              图可能缺边。已找到 {result.aliasScopes.length} 份含别名的配置。
+              {result.stats.externalAliasLike} 个导入长得像路径别名，但没匹配上任何 tsconfig
+              的 paths，图可能缺这些边。
+              <button className="quiet" onClick={() => setNotesOpen(true)}>
+                查看清单
+              </button>
+              <button
+                className="quiet banner-close"
+                onClick={() => setAliasWarnDismissed(true)}
+                title="关闭"
+              >
+                ×
+              </button>
             </div>
           )}
         </div>

@@ -234,6 +234,47 @@ function FilterBar({
         )}
       </div>
 
+      {/*
+        生效中的条件**始终显示**，不管筛选面板开没开。
+        原来只在展开时才画出分面按钮，于是从聚合视图下钻进 packages/components
+        之后：条件生效了，但那个多级路径根本不在顶层目录的按钮列表里——
+        用户看不见自己在筛什么，也没法单独取消，只能整个「清空」。
+        这里改成直接渲染 filter 里的值，而不是渲染「可选项里被选中的那些」。
+      */}
+      {active > 0 && (
+        <div className="active-facets">
+          {filter.query.trim() && (
+            <button
+              className="chip chip--on"
+              onClick={() => onChange({ ...filter, query: '' })}
+              title="移除这个条件"
+            >
+              搜索 {filter.query.trim()} <i>×</i>
+            </button>
+          )}
+          {filter.dirs.map((d) => (
+            <button
+              key={d}
+              className="chip chip--on"
+              onClick={() => onChange({ ...filter, dirs: toggleFacet(filter.dirs, d) })}
+              title="移除这个条件"
+            >
+              {d} <i>×</i>
+            </button>
+          ))}
+          {filter.exts.map((e) => (
+            <button
+              key={e}
+              className="chip chip--on"
+              onClick={() => onChange({ ...filter, exts: toggleFacet(filter.exts, e) })}
+              title="移除这个条件"
+            >
+              {e} <i>×</i>
+            </button>
+          ))}
+        </div>
+      )}
+
       {open && (
         <div className="sidebar-filters-body">
           <FacetGroup

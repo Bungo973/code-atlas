@@ -284,6 +284,7 @@ function Report({
     stats.failed['build-artifact'] + stats.failed['virtual-module'] + stats.failed['out-of-root']
   const wall = scan.scanMs + timing.total
   const realFailures = result.failures.filter((f) => f.reason === 'unresolved')
+  const aliasScopeCount = result.aliasScopes.length
 
   return (
     <>
@@ -404,6 +405,49 @@ function Report({
           {realFailures.length > 30 && (
             <p className="hint">共 {realFailures.length} 条，只列前 30 条。</p>
           )}
+        </div>
+      )}
+
+      {result.aliasLikeExternals.length > 0 && (
+        <div className="card">
+          <h3>疑似漏配别名</h3>
+          <p className="hint">
+            这些 specifier 长得像路径别名（<code>@/</code> <code>~/</code> <code>#</code> 开头），
+            但没匹配上任何 tsconfig 的 <code>paths</code>，所以被当成了外部包——
+            <b>图上少了这些边</b>。
+          </p>
+          <table className="data-table data-table--fixed">
+            <thead>
+              <tr>
+                <th>文件</th>
+                <th>引用</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.aliasLikeExternals.slice(0, 30).map((f, i) => (
+                <tr key={i}>
+                  <td>
+                    <code>{f.source}</code>
+                  </td>
+                  <td>
+                    <code>{f.raw}</code>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {/*
+            成因有两种，对用户的意义完全不同，必须分开说：
+            一种是我们该知道却没找到（tsconfig 漏读），一种是我们不可能知道
+            （别名定义在 vite/webpack 的 JS 配置里，要执行代码才能拿到）。
+            原来的文案笼统说「没匹配上 tsconfig」，暗示是用户配置有问题——不公平。
+          */}
+          <p className="hint">
+            常见成因有两种：别名定义在 <b>vite / webpack 的配置</b>里（本工具只读 tsconfig，
+            无法知道）；或者声明它的 tsconfig 不叫 <code>tsconfig.json</code>、
+            或通过 <code>extends</code> 引入（本工具暂不跟随）。
+            目前已读到 {aliasScopeCount} 份含别名的配置。
+          </p>
         </div>
       )}
     </>

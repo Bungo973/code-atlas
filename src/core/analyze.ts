@@ -103,6 +103,8 @@ export type AnalyzeResult = {
    */
   namespaceImported: Set<string>
   failures: ResolveFailure[]
+  /** 疑似漏配别名的具体来源，界面上可展开成清单 */
+  aliasLikeExternals: { source: string; raw: string }[]
   stats: AnalyzeStats
   timing: Timing
   aliasCount: number
@@ -197,6 +199,8 @@ export async function analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
   const symbolEdges: SymbolEdge[] = []
   const namespaceImported = new Set<string>()
   const failures: ResolveFailure[] = []
+  /** 长得像别名却没匹配上的裸 specifier，保留证据供界面追问 */
+  const aliasLikeExternals: { source: string; raw: string }[] = []
 
   let done = 0
   const concurrency = input.concurrency ?? 32
@@ -280,7 +284,17 @@ export async function analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
         }
       } else if (res.status === 'external') {
         stats.external++
-        if (res.aliasLike) stats.externalAliasLike++
+        if (res.aliasLike) {
+          stats.externalAliasLike++
+          /**
+           * **证据必须留下**，不能只加计数器。
+           *
+           * 原来这里只有 `externalAliasLike++`，界面上写着「21 个」，
+           * 而用户问「哪些」的时候答不上来——答案在计数的那一刻就被扔了。
+           * 一个分析工具的可信度不来自数字好看，来自任何一个数字都能被追问到底。
+           */
+          aliasLikeExternals.push({ source: id, raw: spec })
+        }
       } else if (res.status === 'asset') {
         stats.asset++
       } else {
@@ -301,6 +315,7 @@ export async function analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
     symbolEdges,
     namespaceImported,
     failures,
+    aliasLikeExternals,
     stats,
     timing,
     aliasCount: aliasScopes.reduce((n, s) => n + s.aliases.length, 0),

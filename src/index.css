@@ -1113,3 +1113,29 @@ select {
   min-width: 0;
   max-width: 100%;
 }
+
+/*
+ * 生效中的筛选条件，始终显示（筛选面板折叠时也在）。
+ * 下钻产生的多级路径不在分面按钮列表里，只有这里能看见、能取消。
+ */
+.active-facets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.active-facets .chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 告警条右侧的关闭按钮 */
+.banner-close {
+  margin-left: auto;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 6px;
+}
