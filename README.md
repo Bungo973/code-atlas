@@ -6,7 +6,9 @@
 🔗 **在线体验**：https://bungo973.github.io/code-atlas/
 打开就能看示例——Code Atlas 分析它自己的源码，走的是同一条真流水线。
 
-![主视图：左侧工程目录，右侧依赖关系图](docs/screenshots/overview.png)
+![主视图：左侧工程目录侧栏，右侧依赖关系图。选中 src/core/types.ts，高亮 2 跳内的影响范围](docs/screenshots/impact.png)
+
+<sub>选中 `src/core/types.ts`，影响范围限定 2 跳。蓝色是传播路径，不是「所有相连的边」。</sub>
 
 ---
 
@@ -33,6 +35,38 @@ Code Atlas 一次性回答这几个问题：
   `tests/no-network.test.ts` 把这条做成了 CI 常驻断言，clone 下来 `npm test` 自己验
 - **无需安装** — 不用 CLI，不用装插件，打开网页选个目录就行
 - **多种语言/框架** — TS / JS / JSX / TSX / Vue / Svelte / Astro，含 monorepo 多份 tsconfig
+
+## 影响范围是分层的
+
+同一个文件，层级从 2 跳切到全部：
+
+| 2 跳 | 全部 |
+|---|---|
+| ![2 跳](docs/screenshots/impact.png) | ![全部](docs/screenshots/depth.png) |
+
+无限传播在强连通的大仓库里没有信息量——excalidraw 的 668 个文件里有一个 346 节点的
+强连通分量，不分层的话点哪个文件都高亮同一片 509 个（[ADR-020](docs/DECISIONS.md)）。
+跳数才有区分度：1 跳是「谁直接用我」，2 跳是「改坏了谁会先炸」。
+
+高亮的也只是**传播步**（`跳数(依赖方) = 跳数(被依赖方) + 1`），
+不是「两端都在范围内的所有边」——后者在强连通分量里会把同层的横向边一起点亮，糊成一团。
+
+## 符号级：疑似死代码
+
+![分析面板里的疑似死代码列表](docs/screenshots/symbols.png)
+
+「**疑似**」两个字不可省略：可能被动态引用、被仓库外的消费方引用，或本身就是公开 API。
+面板底部固定说明豁免了多少个、按哪三条规则豁免的。
+
+## 代码不出网
+
+![DevTools Network 面板：分析 668 个文件全程零请求](docs/screenshots/network.png)
+
+分析 excalidraw 的 668 个文件，全程 Network 面板为空。
+
+不过截图有个天然弱点：**空面板既可能是「什么都没发」，也可能是「DevTools 刚打开」**，
+看图的人分不出来。所以真正的证据是 `tests/no-network.test.ts`——
+它断言源码里根本不存在出站 API，是 CI 常驻的、任何人都能自己跑的。
 
 ## 在真实仓库上的表现
 
