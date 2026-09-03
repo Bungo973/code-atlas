@@ -1,0 +1,36 @@
+{
+  "name": "code-atlas",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "verify": "tsx scripts/verify-resolver.ts"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.14.10",
+    "@types/d3-force": "^3.0.10",
+    "d3-force": "^3.0.0",
+    "es-module-lexer": "^2.3.2",
+    "graphology": "^0.26.0",
+    "graphology-components": "^1.5.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-force-graph-2d": "^1.29.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.1",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  }
+}

@@ -1,0 +1,3 @@
+# 仓库里统一存 LF。没有这条的话，Windows 上提交的文件会带着 CRLF 进仓库，
+# CI（ubuntu-latest）拉下来就是一片行尾差异
+* text=auto eol=lf

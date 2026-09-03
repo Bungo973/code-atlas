@@ -1,0 +1,53 @@
+# 部署到 GitHub Pages。
+#
+# 需要先在仓库 Settings → Pages → Source 里选 "GitHub Actions"。
+# vite.config.ts 里 base 是 './'（相对路径），所以子路径部署不需要额外配置。
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # 类型检查和测试跑在构建前：坏的东西不该被部署出去。
+      # 其中 tests/demo.test.ts 会真的分析一遍本仓库源码——
+      # 内置示例是线上大多数人唯一会看到的路径，它必须有护栏。
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx vite build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
