@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d'
 import type { GraphMetrics, Impact } from '../core/graph'
 import { DEPTH_UNLIMITED, topLevelDir } from '../core/graph'
+import { isMatch, type MatchSet } from '../core/search'
 import type { FileNode } from '../core/types'
 import { ACCENT, HAIRLINE, INK, STATUS, SURFACE } from './palette'
 
@@ -57,6 +58,18 @@ const DEPTH_OPTIONS: { value: number; label: string }[] = [
 const RING_ALPHA = [1, 1, 0.72, 0.5]
 const ringAlpha = (hops: number) => RING_ALPHA[Math.min(hops, RING_ALPHA.length - 1)]
 
+/**
+ * 两种淡化不是同一件事，所以不能用同一个透明度。
+ *
+ * **筛掉的**（搜索没命中）＝「这不是你要找的」，应该几乎消失，只留一点位置感；
+ * **失焦的**（不在影响范围内）＝「它仍然是这张图的一部分」，必须看得见结构，
+ * 否则一选中就等于把图删了。
+ *
+ * 两者叠加时取更狠的那个：筛选是硬条件，聚焦是软强调。
+ */
+const ALPHA_FILTERED = 0.08
+const ALPHA_UNFOCUSED = 0.28
+
 export function GraphCanvas({
   graph,
   metrics,
@@ -66,6 +79,7 @@ export function GraphCanvas({
   impact,
   depth,
   onDepthChange,
+  matches,
   colorOf,
   legend,
 }: {
@@ -77,6 +91,8 @@ export function GraphCanvas({
   impact: Impact | null
   depth: number
   onDepthChange: (d: number) => void
+  /** 搜索命中集合，与侧栏共用同一份判定（core/search.ts）。null = 没在筛选 */
+  matches: MatchSet
   colorOf: (id: string) => string
   legend: { label: string; color: string; count: number }[]
 }) {
@@ -102,6 +118,14 @@ export function GraphCanvas({
   const [pointer, setPointer] = useState({ x: 0, y: 0 })
   const hoveredRef = useRef(false)
   const [showCycles, setShowCycles] = useState(true)
+  /**
+   * 已经为哪一份数据自动适应过窗口。
+   *
+   * 存的是 data 的**引用**而不是布尔值：换仓库时 data 换身份，自动重置；
+   * 而拖动节点、悬停这些会让引擎重新收敛的操作不会换身份，也就不会再次自动缩放——
+   * **用户手动调过的视角不能被抢走**。
+   */
+  const fittedFor = useRef<unknown>(null)
 
   /**
    * 循环依赖占比过高时（excalidraw 是 346/668），给一半以上的节点画红圈
@@ -183,6 +207,28 @@ export function GraphCanvas({
   }, [data])
 
   /**
+   * 选中项跑到视口外时把它带回来。
+   *
+   * 联动本来是缺一半的：从画布点节点会展开侧栏目录并滚动过去，
+   * 反方向——从侧栏点一个文件——画布却纹丝不动。668 个节点的图上，
+   * 那个节点可能在屏幕外三屏远的地方，"选中了" 却看不见。
+   *
+   * 只在**确实跑到视口外**时才移动。选中一个本来就看得见的节点还要平移一下，
+   * 画面会在光标底下乱跳，比不动更糟。
+   */
+  useEffect(() => {
+    const fg = fgRef.current
+    if (!fg || !selected) return
+    const node = data.nodes.find((n) => n.id === selected)
+    if (!node || node.x == null || node.y == null) return
+
+    const p = fg.graph2ScreenCoords(node.x, node.y)
+    const margin = 72
+    const outside = p.x < margin || p.y < margin || p.x > size.w - margin || p.y > size.h - margin
+    if (outside) fg.centerAt(node.x, node.y, 480)
+  }, [selected, data.nodes, size.w, size.h])
+
+  /**
    * 该文件到选中文件的跳数。0 = 选中项自身，null = 不在当前层级范围内。
    * 无选中时全部按 0 处理（等于不淡化任何东西）。
    */
@@ -207,6 +253,12 @@ export function GraphCanvas({
     const hs = hopsOf(sourceId)
     const ht = hopsOf(targetId)
     return hs !== null && ht !== null && hs === ht + 1
+  }
+
+  /** 一个节点最终画多淡：筛选优先，其次聚焦 */
+  const alphaOf = (id: string) => {
+    if (!isMatch(matches, id)) return ALPHA_FILTERED
+    return focused(id) ? 1 : ALPHA_UNFOCUSED
   }
 
   /** 位置索引图：全图缩略 + 当前视口矩形 */
@@ -252,7 +304,8 @@ export function GraphCanvas({
     for (const n of data.nodes) {
       if (n.x == null || n.y == null) continue
       const isSel = n.id === selected
-      ctx.globalAlpha = isSel ? 1 : impact && !focused(n.id) ? 0.2 : 0.6
+      // 小地图跟随主图的淡化规则，否则筛选后两处显示的密度对不上
+      ctx.globalAlpha = isSel ? 1 : Math.min(0.6, alphaOf(n.id))
       ctx.beginPath()
       ctx.arc(toX(n.x), toY(n.y), isSel ? 2.4 : Math.min(2.2, 0.6 + n.r / 6), 0, 2 * Math.PI)
       ctx.fillStyle = isSel ? INK : n.color
@@ -271,7 +324,9 @@ export function GraphCanvas({
       Math.max(3, (br.x - tl.x) * s),
       Math.max(3, (br.y - tl.y) * s)
     )
-  }, [data.nodes, selected, impact, size.w, size.h])
+    // alphaOf 闭包了 matches / impact / selected，三者都必须在依赖里，
+    // 否则筛选变了小地图还在按旧集合画
+  }, [data.nodes, selected, impact, matches, size.w, size.h])
 
   const onLocatorClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const tf = locatorTf.current
@@ -313,6 +368,18 @@ export function GraphCanvas({
           nodeLabel={() => ''}
           nodeRelSize={3}
           cooldownTicks={120}
+          /**
+           * 布局收敛后自动适应窗口。
+           *
+           * 没有这一步的话，力导向图收敛在哪儿就停在哪儿——画面上往往是一坨挤在角落的点
+           * 加半屏黑，而「适应窗口」按钮就在右上角，等于把第一印象的成本转嫁给用户。
+           * 每份数据只做一次，之后的收敛（拖动节点会触发）不再抢用户的视角。
+           */
+          onEngineStop={() => {
+            if (fittedFor.current === data) return
+            fittedFor.current = data
+            fgRef.current?.zoomToFit(500, 48)
+          }}
           d3AlphaDecay={0.035}
           onRenderFramePost={() => {
             // 隔帧重绘索引图，避免与主图争用绘制预算
@@ -321,6 +388,15 @@ export function GraphCanvas({
           linkColor={(l) => {
             const s = (l as CanvasLink).source as CanvasNode
             const t = (l as CanvasLink).target as CanvasNode
+            /**
+             * 筛选时只保留**两端都命中**的边。
+             *
+             * 留着通向被筛掉节点的边，画面上就是一堆连向虚无的线头——
+             * 比全部保留更难看，也更难读。
+             */
+            if (matches && !(matches.has(s.id) && matches.has(t.id))) {
+              return 'rgba(255,255,255,0.02)'
+            }
             // 边多时压低不透明度，否则几千条线会糊成一片灰
             if (!impact) return data.dense ? 'rgba(255,255,255,0.055)' : HAIRLINE
             return isStep(s.id, t.id) ? ACCENT : 'rgba(255,255,255,0.03)'
@@ -343,11 +419,15 @@ export function GraphCanvas({
           nodeCanvasObject={(node, ctx) => {
             const r = node.r
             const hops = hopsOf(node.id)
-            const isFocus = hops !== null
             const isSel = node.id === selected
+            /**
+             * 基准透明度，**所有描边都要乘上它**。
+             * 早先版本里各个环各自 `globalAlpha = 1`，结果被筛掉的节点主体几乎不可见、
+             * 红色循环环却还是满不透明——一圈没有圆心的红环浮在画面上。
+             */
+            const alpha = alphaOf(node.id)
 
-            // 0.28 而非 0.12：未聚焦项仍要看得见，否则整张图的结构消失
-            ctx.globalAlpha = isFocus ? 1 : 0.28
+            ctx.globalAlpha = alpha
 
             ctx.beginPath()
             ctx.arc(node.x!, node.y!, r, 0, 2 * Math.PI)
@@ -364,10 +444,10 @@ export function GraphCanvas({
               ctx.beginPath()
               ctx.arc(node.x!, node.y!, r + 2.2, 0, 2 * Math.PI)
               ctx.lineWidth = 1.4
-              ctx.globalAlpha = ringAlpha(hops)
+              ctx.globalAlpha = alpha * ringAlpha(hops)
               ctx.strokeStyle = ACCENT
               ctx.stroke()
-              ctx.globalAlpha = 1
+              ctx.globalAlpha = alpha
             }
 
             if (showCycles && node.inCycle) {
@@ -382,6 +462,8 @@ export function GraphCanvas({
               ctx.beginPath()
               ctx.arc(node.x!, node.y!, r + 3.5, 0, 2 * Math.PI)
               ctx.lineWidth = 2
+              // 选中环永远画满：选中项被自己的搜索词筛掉时，也得看得见它在哪
+              ctx.globalAlpha = 1
               ctx.strokeStyle = INK
               ctx.stroke()
             }
@@ -442,6 +524,11 @@ export function GraphCanvas({
       )}
 
       <div className="canvas-legend">
+        {matches && (
+          <span className="legend-item legend-filter">
+            筛选中 <b>{matches.size}</b> / {data.nodes.length}
+          </span>
+        )}
         {legend.map((l) => (
           <span key={l.label} className="legend-item">
             <i style={{ background: l.color }} />

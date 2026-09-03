@@ -206,6 +206,38 @@ code,
   overflow: hidden;
 }
 
+/* 清空按钮叠在输入框右侧，不占额外的行高 */
+.sidebar-search-box {
+  position: relative;
+  display: flex;
+}
+
+.sidebar-search-box .sidebar-search {
+  flex: 1;
+  min-width: 0;
+  padding-right: 26px;
+}
+
+.sidebar-search-clear {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: var(--r-row);
+}
+
+.sidebar-search-clear:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .sidebar-search {
   margin: 10px 10px 8px;
   background: var(--panel-2);
@@ -346,6 +378,18 @@ code,
 .legend-item b {
   color: var(--ink-2);
   font-weight: 400;
+}
+
+/* 筛选是一种「当前状态」，用强调色——和选中/聚焦属于同一类语义 */
+.legend-filter {
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--r-row);
+  padding: 1px 7px;
+}
+
+.legend-filter b {
+  color: var(--accent);
 }
 
 /* 位置索引图 */

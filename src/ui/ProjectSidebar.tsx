@@ -9,6 +9,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GraphMetrics } from '../core/graph'
+import type { MatchSet } from '../core/search'
 import { ancestorsOf, buildTree, defaultExpanded, flattenVisible, type TreeNode } from '../core/tree'
 import { STATUS } from './palette'
 
@@ -19,6 +20,9 @@ export function ProjectSidebar({
   metrics,
   colorOf,
   highlight,
+  query,
+  onQueryChange,
+  matches,
 }: {
   fileIds: string[]
   selected: string | null
@@ -27,9 +31,16 @@ export function ProjectSidebar({
   colorOf: (id: string) => string
   /** 影响范围高亮集合，与画布共享同一份选择状态 */
   highlight: Set<string> | null
+  /**
+   * 搜索状态由 App 持有，**不是这里的私有 state**。
+   * 画布要用同一份命中集合，各存各的迟早会出现「侧栏说 3 个匹配、画布亮 5 个」。
+   */
+  query: string
+  onQueryChange: (q: string) => void
+  /** null = 没在筛选。判定逻辑在 core/search.ts，两边共用 */
+  matches: MatchSet
 }) {
   const bodyRef = useRef<HTMLDivElement>(null)
-  const [query, setQuery] = useState('')
 
   const root = useMemo(() => buildTree(fileIds), [fileIds])
   const [expanded, setExpanded] = useState<Set<string>>(() => defaultExpanded(root))
@@ -37,16 +48,15 @@ export function ProjectSidebar({
   // 换了仓库就重置展开状态
   useEffect(() => setExpanded(defaultExpanded(root)), [root])
 
-  const q = query.trim().toLowerCase()
   const rows = useMemo(
     () =>
       flattenVisible(
         root,
         // 搜索时强制全展开，否则命中项还是藏在折叠的目录里
-        q ? allDirIds(root) : expanded,
-        q ? (n) => n.id.toLowerCase().includes(q) : undefined
+        matches ? allDirIds(root) : expanded,
+        matches ? (n) => matches.has(n.id) : undefined
       ),
-    [root, expanded, q]
+    [root, expanded, matches]
   )
 
   const virtualizer = useVirtualizer({
@@ -79,12 +89,26 @@ export function ProjectSidebar({
 
   return (
     <div className="panel sidebar">
-      <input
-        className="sidebar-search"
-        placeholder="搜索文件…"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-      />
+      <div className="sidebar-search-box">
+        <input
+          className="sidebar-search"
+          placeholder="搜索文件…　空格分词"
+          value={query}
+          onChange={(e) => onQueryChange(e.target.value)}
+          // Esc 清空是搜索框的通用约定，没有它只能一个字一个字退
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && query) {
+              e.stopPropagation()
+              onQueryChange('')
+            }
+          }}
+        />
+        {query && (
+          <button className="sidebar-search-clear" onClick={() => onQueryChange('')} title="清空">
+            ×
+          </button>
+        )}
+      </div>
 
       <div className="sidebar-body" ref={bodyRef}>
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
@@ -157,7 +181,7 @@ export function ProjectSidebar({
       </div>
 
       <div className="sidebar-footer">
-        {q ? `${matchCount} 个匹配` : `${fileIds.length} 个文件`}
+        {matches ? `${matchCount} / ${fileIds.length} 个文件` : `${fileIds.length} 个文件`}
       </div>
     </div>
   )
