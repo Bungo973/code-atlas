@@ -69,6 +69,7 @@ const GRAIN_OPTIONS: { value: number; label: string }[] = [
   { value: 0, label: '文件' },
   { value: 1, label: '1 层' },
   { value: 2, label: '2 层' },
+  { value: 3, label: '3 层' },
 ]
 
 /** 超过这个规模，文件级视图不再有可读性，默认折叠到目录 */
@@ -324,8 +325,12 @@ export function GraphCanvas({
     /**
      * 聚合模式：节点是目录，边是带权重的目录间依赖。
      *
-     * 半径区间给得比文件级大得多（5–21px 对 2.5–11px）——目录节点只有十几个，
-     * 画大才读得出差异；文件级有几百上千个，画大就必然糊。
+     * 半径区间 [3.5, 13.5]，比文件级略大但不夸张。
+     *
+     * 「节点看起来太大」的根因**不是半径，是间距**：zoomToFit 永远把图铺满画布，
+     * 所以屏幕上的观感只取决于**半径 ÷ 图的跨度**这个比值。
+     * 十几个节点挤在很小的范围里，缩放就会拉到很高，半径再小也显得巨大。
+     * 真正的修法在下面的力参数里——聚合模式用大得多的连线长度和斥力。
      */
     if (grain > 0) {
       const agg = aggregate(
@@ -343,7 +348,7 @@ export function GraphCanvas({
         name: g.id.slice(g.id.lastIndexOf('/') + 1),
         dir: topLevelDir(g.id),
         color: colorOf(g.id),
-        r: 5 + 16 * Math.sqrt(g.files / maxFiles),
+        r: 3.5 + 10 * Math.sqrt(g.files / maxFiles),
         // 目录的入度/出度按**依赖条数**算，不是按目录个数——
         // 「47 条依赖指向这里」比「3 个目录依赖这里」更能说明耦合强度
         direct: 0,
@@ -371,6 +376,9 @@ export function GraphCanvas({
         linked.add(e.target)
       }
 
+      let maxWeight = 1
+      for (const e of agg.edges) maxWeight = Math.max(maxWeight, e.weight)
+
       return {
         nodes: groupNodes,
         links: agg.edges.map((e) => ({
@@ -381,6 +389,8 @@ export function GraphCanvas({
         linked,
         detached: detachedOf(groupNodes, agg.edges),
         dense: false,
+        grouped: true,
+        maxWeight,
       }
     }
 
@@ -427,7 +437,15 @@ export function GraphCanvas({
       links as unknown as { source: string; target: string }[]
     )
 
-    return { nodes: canvasNodes, links, linked, detached, dense: canvasNodes.length > 220 }
+    return {
+      nodes: canvasNodes,
+      links,
+      linked,
+      detached,
+      dense: canvasNodes.length > 220,
+      grouped: false,
+      maxWeight: 1,
+    }
     // grain 必须在依赖里。漏掉它的话聚合分支永远不会重新执行——
     // 段控件点了有高亮，画面纹丝不动，而且不报任何错
   }, [graph, metrics, nodes, colorOf, isolate, matches, grain])
@@ -458,7 +476,17 @@ export function GraphCanvas({
     if (!fg) return
     const n = data.nodes.length
 
-    fg.d3Force('charge')?.strength(-38 - Math.min(170, n / 3))
+    /**
+     * 聚合模式要**大得多**的间距。
+     *
+     * zoomToFit 永远把图铺满画布，所以节点在屏幕上的观感只取决于
+     * **半径 ÷ 图的跨度**。十几个目录节点如果按文件级的力参数排布，
+     * 跨度只有一百来个单位，缩放会拉到十倍，半径再小也是一坨巨球。
+     *
+     * 所以修法不是继续调小半径，是把图**撑开**：连线长度和斥力都拉高一个数量级，
+     * 跨度上去了，同样的半径看起来就正常了。
+     */
+    fg.d3Force('charge')?.strength(data.grouped ? -1400 : -38 - Math.min(170, n / 3))
 
     /**
      * **不要用 charge.distanceMax。** 试过，会让拖动时整张图不规则跳动。
@@ -471,7 +499,7 @@ export function GraphCanvas({
      *
      * 向心力是线性连续的，没有这个毛病，所以边界问题交给它解决。
      */
-    fg.d3Force('link')?.distance(data.dense ? 36 : 26)
+    fg.d3Force('link')?.distance(data.grouped ? 150 : data.dense ? 36 : 26)
     fg.d3Force(
       'collide',
       forceCollide<CanvasNode>((node) => node.r + 1.5).iterations(2)
@@ -493,7 +521,15 @@ export function GraphCanvas({
      * - **没拴在主体上的碎片** 用 0.08。它们没有弹簧可以抵抗，
      *   需要更强的拉力才能收到核心外围一圈，落在 118 左右。
      */
-    const pull = (node: CanvasNode) => (data.detached.has(node.id) ? 0.08 : 0.02)
+    /**
+     * 聚合模式下向心力要**同步调弱一个数量级**。
+     *
+     * 它和斥力是一对：平衡点 d 满足「n·|charge|/d² = s·d」。
+     * 上面把斥力拉到 -1400 是为了把图撑开，如果 s 还留在 0.02，
+     * 平衡点会被摁回 100 左右——等于一边踩油门一边踩刹车，图照样是一小坨。
+     */
+    const [sMain, sDetached] = data.grouped ? [0.004, 0.02] : [0.02, 0.08]
+    const pull = (node: CanvasNode) => (data.detached.has(node.id) ? sDetached : sMain)
     fg.d3Force('centerX', forceX<CanvasNode>(0).strength(pull))
     fg.d3Force('centerY', forceY<CanvasNode>(0).strength(pull))
 
@@ -726,14 +762,20 @@ export function GraphCanvas({
             const t = link.target as CanvasNode
             if (impact) return isStep(s.id, t.id) ? 2 : 1
             /**
-             * 聚合模式下线宽编码依赖条数。
+             * 聚合模式下线宽编码依赖条数，但**必须有上界**。
              *
-             * 目录之间「有 3 条依赖」和「有 470 条依赖」在架构上是两回事，
-             * 画成同样粗细等于把最关键的信息扔了。取对数是因为权重跨度极大
-             * （element-plus 上从 1 到 900+），线性映射会让绝大多数边细到看不见。
+             * 目录之间「3 条依赖」和「470 条依赖」在架构上是两回事，
+             * 画成一样粗等于把最关键的信息扔了。但裸的对数映射没有上界——
+             * element-plus 上权重最大 900+，直接算出来是 9px 的粗管子，
+             * 一条边糊住半张图。这和节点半径犯的是同一个错（ADR-019），
+             * 而半径早就改成「按当前视图归一化到固定区间」了，边宽漏了。
+             *
+             * 所以同样两步：先取对数压掉量级差，再按**当前视图的最大权重**
+             * 归一化到 [0.5, 3.2]px。无论仓库多大，最粗的边就那么粗。
              */
-            if (link.weight > 1) return 0.6 + Math.log2(link.weight) * 0.9
-            return 1
+            if (!data.grouped) return 1
+            const t01 = Math.log2(1 + link.weight) / Math.log2(1 + data.maxWeight)
+            return 0.5 + 2.7 * t01
           }}
           /**
            * 点目录节点 = **下钻**，不是选中。
