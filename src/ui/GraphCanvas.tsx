@@ -428,7 +428,9 @@ export function GraphCanvas({
     )
 
     return { nodes: canvasNodes, links, linked, detached, dense: canvasNodes.length > 220 }
-  }, [graph, metrics, nodes, colorOf, isolate, matches])
+    // grain 必须在依赖里。漏掉它的话聚合分支永远不会重新执行——
+    // 段控件点了有高亮，画面纹丝不动，而且不报任何错
+  }, [graph, metrics, nodes, colorOf, isolate, matches, grain])
 
   /**
    * 力的参数。
