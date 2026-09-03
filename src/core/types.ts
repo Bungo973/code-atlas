@@ -1,3 +1,5 @@
+import type { WorkspacePackage } from './workspace'
+
 /** 数据模型。与 docs/PLAN.md 第 4 节保持一致 */
 
 export type FileNode = {
@@ -92,6 +94,8 @@ export type AliasScope = {
 }
 
 export type ResolveContext = {
+  /** 仓库内的 workspace 包，用于把 `@scope/pkg` 这类裸 specifier 认成内部引用 */
+  packages: WorkspacePackage[]
   /** 仓库根，posix 绝对路径 */
   root: string
   aliases: Alias[]

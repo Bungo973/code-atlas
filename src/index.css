@@ -67,8 +67,38 @@ code,
   font-size: 12px;
 }
 
+/**
+ * 全局等宽数字。
+ *
+ * 这是个数据工具，界面上到处是会变化的数值——比例字距下 `1` 比 `8` 窄一大截，
+ * 换个仓库整行文字就左右跳动。tabular-nums 让数字占位固定，
+ * 侧栏那一列入度也才能真正对齐成一列。
+ *
+ * 原来只有 .num 和少数几处有，结果是详情栏、抽屉表格对齐，而顶栏、图例、
+ * 提示框不对齐——**同一个界面里两套数字排版**，比全都不做还难看。
+ */
+body {
+  font-variant-numeric: tabular-nums;
+}
+
 .num {
   font-variant-numeric: tabular-nums;
+}
+
+/**
+ * 行内数字：数值一档亮，单位/标签一档暗。
+ *
+ * 「31 个代码文件」里真正的信息是 31，「个代码文件」只是它的单位。
+ * 两者同色同重的话，读的人得先解析一遍句子才能取到数——
+ * 这在一个每屏都是数字的界面里是纯粹的浪费。
+ */
+.metric {
+  color: var(--ink-3);
+}
+
+.metric b {
+  color: var(--ink-2);
+  font-weight: 500;
 }
 
 /* ── app：整屏两段，主视图不产生页面滚动 ── */
@@ -256,6 +286,20 @@ code,
 
 .sidebar-search:focus {
   border-color: var(--line);
+}
+
+/* 抽屉里的行内控件：标签 + 控件 + 说明，同一行读完 */
+.inline-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.inline-field .hint {
+  margin: 0;
 }
 
 /* ── 筛选条：默认折叠，展开后是两组可切换的分面 ── */
@@ -608,6 +652,12 @@ code,
   margin-top: 3px;
   color: var(--ink-3);
   font-size: 11px;
+}
+
+/* 提示框里的数字同样比它的单位亮一档，和顶栏、详情栏保持同一套读法 */
+.canvas-tooltip span b {
+  color: var(--ink-2);
+  font-weight: 500;
 }
 
 /* 与选中项的关系：解释这个节点为什么亮着。用强调色，和上面的静态属性区分开 */
@@ -1033,4 +1083,33 @@ select {
   border-radius: 2px;
   background: var(--accent);
   transition: width 0.12s linear;
+}
+
+/**
+ * 长内容必须在**自己的容器里**折行或滚动，绝不能撑破卡片。
+ *
+ * 失败样本那张表原来第二列挂的是 .num（自带 white-space: nowrap，本是给数字用的），
+ * 长 specifier 于是把表格撑得比卡片还宽，内容溢出圆角边框，
+ * 再由抽屉整体横向滚动——卡片自己被推出视野，左边一列直接被裁掉。
+ *
+ * table-layout: fixed 让两列各占一半、宽度由容器决定而不是由内容决定；
+ * overflow-wrap: anywhere 允许在路径中间断行（路径没有空格，不断就只能撑宽）。
+ */
+.data-table--fixed {
+  table-layout: fixed;
+}
+
+.data-table--fixed td,
+.data-table--fixed th {
+  overflow-wrap: anywhere;
+}
+
+/* 卡片是所有内容的边界，任何子元素都不该越过它 */
+.card {
+  min-width: 0;
+}
+
+.card > * {
+  min-width: 0;
+  max-width: 100%;
 }

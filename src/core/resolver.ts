@@ -9,6 +9,7 @@
 
 import { dirname, extname, joinPath, normalizeKey, resolvePath, toPosix } from './path'
 import type { Alias, ResolveContext, ResolveResult } from './types'
+import { matchWorkspacePackage } from './workspace'
 
 /** 候选扩展名，按顺序尝试，命中即止。'' 表示 specifier 已自带扩展名 */
 const TRY_EXTS = [
@@ -168,9 +169,22 @@ export function resolveImport(spec: string, fromFile: string, ctx: ResolveContex
     // 根相对路径。注意 monorepo 里 project root ≠ repo root，这里会有已知误差
     bases = [joinPath(ctx.root, clean)]
   } else {
-    // 裸 specifier 且不匹配任何别名 → 外部包。
-    // 但如果它长得像别名，多半是 tsconfig 没找到，需要单独标记出来告警
-    return { status: 'external', aliasLike: looksLikeAlias(clean) }
+    /**
+     * 裸 specifier。先问一句：它是不是本仓库里某个 workspace 包？
+     *
+     * monorepo 里包与包之间用包名互相引用，靠 node_modules 软链指回同一个仓库。
+     * 不认这层映射就会把大量**内部**依赖丢进 external——element-plus 上因此
+     * 丢掉了 1957 条边，而命中率还显示 98.7%（ADR-025）。
+     *
+     * 放在别名之后：tsconfig paths 是显式配置，优先级更高。
+     */
+    const inWorkspace = matchWorkspacePackage(clean, ctx.packages)
+    if (inWorkspace) {
+      bases = inWorkspace
+    } else {
+      // 真外部包。长得像别名的话多半是 tsconfig 没找到，单独标记出来告警
+      return { status: 'external', aliasLike: looksLikeAlias(clean) }
+    }
   }
 
   for (const base of bases) {

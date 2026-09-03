@@ -21,6 +21,7 @@ export function NotesDrawer({
   result,
   scan,
   concurrency,
+  onConcurrencyChange,
   onSelect,
   onClose,
 }: {
@@ -29,6 +30,7 @@ export function NotesDrawer({
   result: AnalyzeResult
   scan: BrowserScan
   concurrency: number
+  onConcurrencyChange: (n: number) => void
   onSelect: (id: string) => void
   onClose: () => void
 }) {
@@ -99,7 +101,12 @@ export function NotesDrawer({
             {section === 'dead' && <DeadCode deadCode={deadCode} onJump={jump} />}
             {section === 'islands' && <Islands metrics={metrics} onJump={jump} />}
             {section === 'report' && (
-              <Report result={result} scan={scan} concurrency={concurrency} />
+              <Report
+                result={result}
+                scan={scan}
+                concurrency={concurrency}
+                onConcurrencyChange={onConcurrencyChange}
+              />
             )}
           </div>
         </div>
@@ -264,10 +271,12 @@ function Report({
   result,
   scan,
   concurrency,
+  onConcurrencyChange,
 }: {
   result: AnalyzeResult
   scan: BrowserScan
   concurrency: number
+  onConcurrencyChange: (n: number) => void
 }) {
   const { stats, timing } = result
   const { rate, internal } = hitRate(stats)
@@ -307,7 +316,27 @@ function Report({
             <Row label="路径解析" value={`${timing.resolve.toFixed(0)} ms`} />
           </tbody>
         </table>
-        <p className="hint">并发 {concurrency}。后三项是并发下的累计值，相加会超过总耗时。</p>
+        <p className="hint">后三项是并发下的累计值，相加会超过总耗时。</p>
+
+        {/*
+          并发数原来放在顶栏，紧挨着主操作按钮。它是做性能对比时加的调试旋钮，
+          用户没有任何理由动它，却占着整个界面最贵的位置。
+          挪到它影响的耗时数字旁边——要调的人在这儿找得到，不调的人再也看不见。
+        */}
+        <label className="inline-field">
+          读文件并发
+          <select
+            value={concurrency}
+            onChange={(e) => onConcurrencyChange(Number(e.target.value))}
+          >
+            {[1, 8, 16, 32, 64, 128].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <span className="hint">改完需要重新分析才生效</span>
+        </label>
       </div>
 
       <div className="card">
@@ -345,20 +374,36 @@ function Report({
       {realFailures.length > 0 && (
         <div className="card">
           <h3>真实失败样本</h3>
-          <table className="data-table">
+          {/*
+            两列都是可能很长的路径和 specifier，必须能折行。
+            原来第二列挂的是 .num（它带 white-space: nowrap，本来是给数字用的），
+            于是长 specifier 把表格撑得比卡片还宽，内容直接溢出圆角边框，
+            再由抽屉整体横向滚动——卡片自己被推出视野。
+            另外补上表头：只看两列裸路径，读的人分不出哪列是文件哪列是引用。
+          */}
+          <table className="data-table data-table--fixed">
+            <thead>
+              <tr>
+                <th>文件</th>
+                <th>解析不了的引用</th>
+              </tr>
+            </thead>
             <tbody>
               {realFailures.slice(0, 30).map((f, i) => (
                 <tr key={i}>
                   <td>
                     <code>{f.source}</code>
                   </td>
-                  <td className="num">
+                  <td>
                     <code>{f.raw}</code>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {realFailures.length > 30 && (
+            <p className="hint">共 {realFailures.length} 条，只列前 30 条。</p>
+          )}
         </div>
       )}
     </>

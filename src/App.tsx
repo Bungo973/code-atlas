@@ -73,6 +73,7 @@ export function App() {
           files: s.files,
           allPaths: s.allPaths,
           tsconfigs: s.tsconfigs,
+          packageJsons: s.packageJsons,
           concurrency,
           onProgress: (done, total) => {
             if (done % 40 === 0 || done === total) setProgress({ done, total })
@@ -159,8 +160,15 @@ export function App() {
           <div className="app-bar-project">
             <b className="mono">{scan.rootName}</b>
             {isDemo && <span className="tag">示例</span>}
-            <span>{scan.files.length} 个代码文件</span>
-            {ready && <span>{result.edges.length} 条依赖</span>}
+            {/* 数字比标签亮一档：这是数据工具，数字才是内容 */}
+            <span className="metric">
+              <b>{scan.files.length}</b> 个代码文件
+            </span>
+            {ready && (
+              <span className="metric">
+                <b>{result.edges.length}</b> 条依赖
+              </span>
+            )}
           </div>
         )}
 
@@ -170,21 +178,11 @@ export function App() {
           </div>
         )}
 
+        {/*
+          这里只放主操作。并发数是做性能对比时加的调试旋钮，已挪进
+          「分析 → 解析报告」，和它影响的耗时数字放在一起。
+        */}
         <div className="app-bar-right">
-          <label>
-            并发
-            <select
-              value={concurrency}
-              onChange={(e) => setConcurrency(Number(e.target.value))}
-              disabled={busy}
-            >
-              {[1, 8, 16, 32, 64, 128].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
           <button className="primary" onClick={run} disabled={busy || !isSupported()}>
             {busy ? '分析中' : scan ? '换一个目录' : '打开目录'}
           </button>
@@ -290,6 +288,7 @@ export function App() {
           result={result}
           scan={scan}
           concurrency={concurrency}
+          onConcurrencyChange={setConcurrency}
           onSelect={setSelected}
           onClose={() => setNotesOpen(false)}
         />

@@ -59,11 +59,79 @@ const EXPORT_PATTERNS = [
   /(?:^|[\s;}])export\s*\{([^}]*)\}/g,
 ]
 
-/** 去掉注释，避免正则把注释里的 `import` 当真 */
+/**
+ * 去掉注释，避免正则把注释里的 `import` 当真。**必须是字符串感知的。**
+ *
+ * 原来是两条正则直接扫全文，不认识字符串字面量。excalidraw 里有这么一行：
+ *
+ *     import { getShortcutKey } from "../..//shortcut";
+ *                                          ↑↑ 源码自己的笔误，双斜杠
+ *
+ * 正则把 `//shortcut";` 当成行注释整段删掉，**连收尾引号一起删**。
+ * 引号配对随之错位，import 正则把下一条语句也吞了进去——
+ * 一个笔误吃掉两条 import，而命中率完全看不见（被吞掉的 import 不进分母）。
+ * 原来那个 `[^:\\]` 前置条件是为了保护 `https://`，这里 `//` 前面是 `.`，挡不住。
+ *
+ * 改成单遍扫描，显式跟踪字符串状态。注意**字符串内容原样保留**——
+ * 这个函数只负责删注释，而 import 的 specifier 本身就是字符串。
+ *
+ * 已知局限：不区分正则字面量和除号，`str.replace(/'/g, "")` 里那个 `'`
+ * 会被当成字符串开头。但因为字符串一律原样抄写，**最坏结果只是漏删一处注释，
+ * 永远不会删掉真代码**——而原来那版的失败方式恰恰是吃掉源码。
+ */
 function stripNoise(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:\\])\/\/[^\n]*/g, '$1')
+  const out: string[] = []
+  const n = source.length
+  let i = 0
+
+  /** 注释按原长度换成空格，换行保留：行列位置不变，出问题时好定位 */
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to; k++) out.push(source[k] === '\n' ? '\n' : ' ')
+  }
+
+  while (i < n) {
+    const c = source[i]
+    const next = source[i + 1]
+
+    if (c === '/' && next === '/') {
+      const start = i
+      while (i < n && source[i] !== '\n') i++
+      blank(start, i)
+      continue
+    }
+
+    if (c === '/' && next === '*') {
+      const start = i
+      i += 2
+      while (i < n && !(source[i] === '*' && source[i + 1] === '/')) i++
+      i = Math.min(n, i + 2)
+      blank(start, i)
+      continue
+    }
+
+    if (c === '"' || c === "'" || c === '`') {
+      out.push(c)
+      i++
+      while (i < n) {
+        if (source[i] === '\\') {
+          out.push(source[i])
+          if (i + 1 < n) out.push(source[i + 1])
+          i += 2
+          continue
+        }
+        const closing = source[i] === c
+        out.push(source[i])
+        i++
+        if (closing) break
+      }
+      continue
+    }
+
+    out.push(c)
+    i++
+  }
+
+  return out.join('')
 }
 
 const IDENT = /^[A-Za-z_$][\w$]*$/

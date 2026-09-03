@@ -9,7 +9,7 @@
  * 右下角是位置索引图（locator）：全图缩略 + 当前视口矩形，点击即可跳转。
  */
 
-import { forceCollide } from 'd3-force'
+import { forceCollide, forceX, forceY } from 'd3-force'
 import type Graph from 'graphology'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d'
@@ -54,6 +54,43 @@ const DEPTH_OPTIONS: { value: number; label: string }[] = [
   { value: DEPTH_UNLIMITED, label: '全部' },
 ]
 
+/**
+ * 取景用的稳健包围盒：丢掉最外侧 1.5% 的点。
+ *
+ * 「排除孤岛」只解决了一半——**只有一两条边的叶子节点同样会被斥力甩很远**，
+ * 而它们是有连线的，排除不掉。与其逐类去猜谁是离群点，不如直接按分位数裁：
+ * 个别枝杈不该决定整图的缩放级别。
+ *
+ * 裁 1.5% 而不是更多：真实存在的独立小簇只要超过总量的 1.5% 就仍然会被框进去，
+ * 不会因为「看起来在外面」就被裁掉。
+ */
+function coreBoxFilter(
+  nodes: CanvasNode[],
+  linked: Set<string>
+): ((n: CanvasNode) => boolean) | null {
+  const pts = nodes.filter((n) => linked.has(n.id) && n.x != null && n.y != null)
+  if (pts.length < 12) return null
+
+  const xs = pts.map((p) => p.x!).sort((a, b) => a - b)
+  const ys = pts.map((p) => p.y!).sort((a, b) => a - b)
+  const at = (arr: number[], t: number) =>
+    arr[Math.min(arr.length - 1, Math.max(0, Math.round((arr.length - 1) * t)))]
+
+  const x0 = at(xs, 0.015)
+  const x1 = at(xs, 0.985)
+  const y0 = at(ys, 0.015)
+  const y1 = at(ys, 0.985)
+
+  return (n) =>
+    linked.has(n.id) &&
+    n.x != null &&
+    n.y != null &&
+    n.x >= x0 &&
+    n.x <= x1 &&
+    n.y >= y0 &&
+    n.y <= y1
+}
+
 /** 跳数越远越淡，让「先炸的」和「最终波及的」在一张图上分得开 */
 const RING_ALPHA = [1, 1, 0.72, 0.5]
 const ringAlpha = (hops: number) => RING_ALPHA[Math.min(hops, RING_ALPHA.length - 1)]
@@ -69,6 +106,19 @@ const ringAlpha = (hops: number) => RING_ALPHA[Math.min(hops, RING_ALPHA.length 
  */
 const ALPHA_FILTERED = 0.08
 const ALPHA_UNFOCUSED = 0.28
+
+/**
+ * 模拟要跑够收敛所需的帧数。
+ *
+ * 这个数不能拍脑袋定，它由 alphaDecay 决定：alpha 从 1 衰减到 d3 的默认下限
+ * 0.001 需要 `ln(0.001) / ln(1 - 0.035) ≈ 194` 帧。
+ * 原来写的 120 **在收敛前就停了**——大图上那些只有一两条边的叶子节点
+ * 还在往回飞的半路上就被定格，于是画面上留下一根根长刺，
+ * 而取景又必须把这些刺框进去，核心结构就被压成中间一小坨。
+ *
+ * 小图看不出来（几十个节点几十帧就稳了），所以内置示例上一直是好的。
+ */
+const COOLDOWN_TICKS = 200
 
 export function GraphCanvas({
   graph,
@@ -201,28 +251,123 @@ export function GraphCanvas({
     canvasNodes.sort((a, b) => b.direct - a.direct)
 
     const links: CanvasLink[] = []
+    /**
+     * 当前视图里**有连线**的节点。
+     *
+     * 用它而不是 metrics.islands：隔离视图下一个节点可能全仓库有依赖、
+     * 在这个子集里却一条边都不剩，那它在这张图上就是孤岛。
+     * 「是不是孤岛」必须按画面上的边算。
+     */
+    const linked = new Set<string>()
     graph.forEachDirectedEdge((_e, _a, source, target) => {
       // 隔离时只保留两端都在子集里的边——力导向图收到指向不存在节点的边会直接崩
       if (shown && !(shown.has(source) && shown.has(target))) return
       links.push({ source, target })
+      linked.add(source)
+      linked.add(target)
     })
-    return { nodes: canvasNodes, links, dense: canvasNodes.length > 220 }
+    /**
+     * 没有拴在主体上的节点：不属于**最大弱连通分量**的那些。
+     *
+     * 判据不能是「有没有边」——两个互相连接、但不连到主体的点，
+     * 在布局上和一个孤立点是完全同一类东西（上一版正是从这条缝里漏掉了它们）。
+     * 也不能用 metrics 里的全仓库口径：隔离视图下连通性是按画面上的边算的。
+     */
+    const adj = new Map<string, string[]>()
+    for (const n of canvasNodes) adj.set(n.id, [])
+    for (const l of links) {
+      adj.get(l.source as string)?.push(l.target as string)
+      adj.get(l.target as string)?.push(l.source as string)
+    }
+
+    const seen = new Set<string>()
+    let biggest: string[] = []
+    for (const n of canvasNodes) {
+      if (seen.has(n.id)) continue
+      const comp: string[] = []
+      const queue = [n.id]
+      seen.add(n.id)
+      for (let i = 0; i < queue.length; i++) {
+        comp.push(queue[i])
+        for (const next of adj.get(queue[i]) ?? []) {
+          if (seen.has(next)) continue
+          seen.add(next)
+          queue.push(next)
+        }
+      }
+      if (comp.length > biggest.length) biggest = comp
+    }
+    const main = new Set(biggest)
+    const detached = new Set(canvasNodes.map((n) => n.id).filter((id) => !main.has(id)))
+
+    return { nodes: canvasNodes, links, linked, detached, dense: canvasNodes.length > 220 }
   }, [graph, metrics, nodes, colorOf, isolate, matches])
 
   /**
-   * 力的参数随规模调整，并**加入碰撞力**——d3-force 默认不含碰撞，
-   * 节点会直接叠在一起。这是「挤」的另一半原因。
+   * 力的参数。
+   *
+   * 力导向图只有三种力，边缘节点飞得太远是前两种力的**平衡点**决定的，
+   * 不是没算完：
+   *
+   *   斥力 charge  每个节点排斥**其他所有节点**，按 1/d² 衰减 —— 注意是全局的
+   *   弹簧 link    只作用在有边的两点之间，把距离拉向 distance
+   *   居中 center  只是平移整个坐标系让质心回到原点，**对单个节点不施加任何力**
+   *
+   * 第三条最反直觉：forceCenter 救不了离群点，一个点飞到天边，
+   * 它只会把整张图跟着挪过去。
+   *
+   * 一个只连一条边的叶子，受力平衡时：
+   *   核心斥力 ≈ 630 × 208 / d²   弹簧拉力 ≈ (d − 36) / d
+   *   两者相等 → d ≈ 360，而 630 个节点的核心半径才 ~100。
+   * 所以叶子稳定停在核心外 3.6 倍处，取景被迫拉远，核心压成一小坨。
+   *
+   * 更糟的是「两个互相连接、但不连到主体」的点对：它们之间的弹簧只管彼此，
+   * 整对被核心持续推开，而**没有任何力把这一对拉回来**。
    */
   useEffect(() => {
     const fg = fgRef.current
     if (!fg) return
     const n = data.nodes.length
+
     fg.d3Force('charge')?.strength(-38 - Math.min(170, n / 3))
+
+    /**
+     * **不要用 charge.distanceMax。** 试过，会让拖动时整张图不规则跳动。
+     *
+     * 原因在 Barnes-Hut：斥力用四叉树近似，一整个象限被当成一个超级节点。
+     * 当那个超级节点的质心距离跨过 distanceMax 时，
+     * **几百个节点的斥力会一次性整体消失或出现**——是阶跃，不是渐变。
+     * 拖动时模拟一直保持高 alpha，节点在边界两侧反复穿越，斥力就来回开关，
+     * 形成肉眼可见的抖动。
+     *
+     * 向心力是线性连续的，没有这个毛病，所以边界问题交给它解决。
+     */
     fg.d3Force('link')?.distance(data.dense ? 36 : 26)
     fg.d3Force(
       'collide',
       forceCollide<CanvasNode>((node) => node.r + 1.5).iterations(2)
     )
+
+    /**
+     * 分档向心力：整张图的边界全靠它。
+     *
+     * 力是线性的（拉力 ∝ 距离），所以处处连续，不会像 distanceMax 那样抖。
+     * 平衡点可以直接解出来——斥力 630×208/d² = 拉力 s·d：
+     *
+     *   s = 0.02  →  d ≈ 187      s = 0.08  →  d ≈ 118
+     *
+     * 而核心本身的半径约 100。所以：
+     *
+     * - **主体内的节点** 用 0.02。够把「只连一条边、被推到 360 外」的叶子
+     *   拉回到 187 附近，同时弱到不会把核心压密——核心一密就更糊，
+     *   而当初把斥力调这么高正是为了让它散开。
+     * - **没拴在主体上的碎片** 用 0.08。它们没有弹簧可以抵抗，
+     *   需要更强的拉力才能收到核心外围一圈，落在 118 左右。
+     */
+    const pull = (node: CanvasNode) => (data.detached.has(node.id) ? 0.08 : 0.02)
+    fg.d3Force('centerX', forceX<CanvasNode>(0).strength(pull))
+    fg.d3Force('centerY', forceY<CanvasNode>(0).strength(pull))
+
     fg.d3ReheatSimulation()
   }, [data])
 
@@ -398,7 +543,7 @@ export function GraphCanvas({
            */
           nodeLabel={() => ''}
           nodeRelSize={3}
-          cooldownTicks={120}
+          cooldownTicks={COOLDOWN_TICKS}
           /**
            * 布局收敛后自动适应窗口。
            *
@@ -409,7 +554,19 @@ export function GraphCanvas({
           onEngineStop={() => {
             if (fittedFor.current === data) return
             fittedFor.current = data
-            fgRef.current?.zoomToFit(500, 48)
+            const fg = fgRef.current
+            if (!fg) return
+            /**
+             * **自动取景只框「主体」**：有连线、且落在稳健包围盒内的节点。
+             *
+             * 取景要回答的是「这个仓库长什么样」。孤岛在依赖图上什么都不说明，
+             * 个别被甩出去的枝杈也一样——让噪音决定缩放级别，核心就被压成一小坨。
+             * 被裁掉的节点一个都没丢：侧栏、分析面板、小地图里都还在，
+             * 「适应窗口」按钮也仍然框全部。
+             */
+            const fit = coreBoxFilter(data.nodes, data.linked)
+            if (fit) fg.zoomToFit(500, 48, fit)
+            else fg.zoomToFit(500, 48)
           }}
           d3AlphaDecay={0.035}
           onRenderFramePost={() => {
@@ -551,7 +708,12 @@ export function GraphCanvas({
           />
           循环依赖
         </label>
-        <button className="quiet" onClick={() => fgRef.current?.zoomToFit(400, 60)}>
+        {/* 自动取景只框结构，这个按钮框全部——两种意图，各有各的场合 */}
+        <button
+          className="quiet"
+          onClick={() => fgRef.current?.zoomToFit(400, 60)}
+          title="框住全部节点，含孤岛"
+        >
           适应窗口
         </button>
       </div>
@@ -640,7 +802,7 @@ function NodeDetails({ node, impact }: { node: CanvasNode; impact: Impact | null
       <b>{node.name}</b>
       {dir && <i>{dir}</i>}
       <span>
-        {node.direct} 个文件直接引用 · 引用了 {node.out} 个 · {node.loc} 行
+        <b>{node.direct}</b> 个文件直接引用 · 引用了 <b>{node.out}</b> 个 · <b>{node.loc}</b> 行
         {node.inCycle ? ' · 在循环中' : ''}
       </span>
       {impact && <RelationToSelection node={node} impact={impact} />}

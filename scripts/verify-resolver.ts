@@ -23,6 +23,7 @@ async function scan(root: string) {
   const files: SourceFile[] = []
   const allPaths = new Set<string>()
   const configPaths: string[] = []
+  const packagePaths: string[] = []
   let totalFileCount = 0
 
   async function walk(dir: string): Promise<void> {
@@ -44,6 +45,7 @@ async function scan(root: string) {
       allPaths.add(normalizeKey(full))
       // 整棵树都收集，不能只看根目录
       if (e.name === 'tsconfig.json' || e.name === 'jsconfig.json') configPaths.push(full)
+      if (e.name === 'package.json') packagePaths.push(full)
       if (isCodeFile(e.name)) {
         files.push({ path: full, read: () => readFile(full, 'utf8') })
       }
@@ -52,6 +54,17 @@ async function scan(root: string) {
   }
 
   await walk(root)
+
+  const packageJsons: { path: string; text: string }[] = []
+  await Promise.all(
+    packagePaths.map(async (p) => {
+      try {
+        packageJsons.push({ path: p, text: await readFile(p, 'utf8') })
+      } catch {
+        /* 跳过 */
+      }
+    })
+  )
 
   const tsconfigs: TsconfigSource[] = []
   for (const p of configPaths) {
@@ -62,7 +75,7 @@ async function scan(root: string) {
     }
   }
 
-  return { files, allPaths, tsconfigs, totalFileCount, scanMs: Date.now() - t0 }
+  return { files, allPaths, tsconfigs, packageJsons, totalFileCount, scanMs: Date.now() - t0 }
 }
 
 // ────────────────────────── 报告 ──────────────────────────
@@ -82,6 +95,7 @@ function report(root: string, s: Awaited<ReturnType<typeof scan>>, r: AnalyzeRes
   console.log('━'.repeat(64))
   console.log(`扫描  ${r.nodes.length} 个代码文件 / ${s.totalFileCount} 个文件`)
   console.log(`别名  ${r.aliasCount} 条，来自 ${r.aliasScopes.length} 份 tsconfig`)
+  console.log(`包名  ${r.packages.length} 个 workspace 包`)
   console.log(`提取  lexer ${stats.lexerOk} / 正则回退 ${stats.lexerFallback}`)
 
   console.log('')
@@ -166,6 +180,7 @@ async function main() {
       files: s.files,
       allPaths: s.allPaths,
       tsconfigs: s.tsconfigs,
+      packageJsons: s.packageJsons,
       concurrency: 32,
     })
     const { rate, wall } = report(abs, s, r)

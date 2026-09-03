@@ -11,6 +11,11 @@ import { basename, dirname, extname, normalizeKey, relativeTo, toPosix } from '.
 import { resolveImport } from './resolver'
 import { isCodeFile } from './scan-config'
 import { parseTsconfig } from './tsconfig'
+import {
+  parseWorkspacePackages,
+  type PackageJsonSource,
+  type WorkspacePackage,
+} from './workspace'
 import type {
   AliasScope,
   DepEdge,
@@ -50,6 +55,11 @@ export type AnalyzeInput = {
    * 被误判成外部包，图直接空掉——而命中率还显示 100%（ADR-012）。
    */
   tsconfigs?: TsconfigSource[]
+  /**
+   * 仓库里的**全部** package.json。用于把 `@scope/pkg` 这类裸 specifier
+   * 认成 monorepo 内部引用而不是外部 npm 包（ADR-025）。
+   */
+  packageJsons?: PackageJsonSource[]
   /** 并发读取数。浏览器端逐文件异步，这个值影响很大 */
   concurrency?: number
   onProgress?: (done: number, total: number) => void
@@ -98,6 +108,8 @@ export type AnalyzeResult = {
   aliasCount: number
   /** 实际生效的别名作用域，用于界面展示「找到了哪几份 tsconfig」 */
   aliasScopes: AliasScope[]
+  /** 识别到的 workspace 包，用于报告「有没有认出 monorepo」 */
+  packages: WorkspacePackage[]
 }
 
 const emptyStats = (): AnalyzeStats => ({
@@ -173,6 +185,9 @@ export async function analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
   const rootScope: AliasScope = { dir: root, aliases: [], baseDir: root }
   const scopeFor = makeScopePicker(aliasScopes, rootScope)
 
+  // 包名 → 目录的映射。全仓库共用一份，不随文件位置变化
+  const packages = parseWorkspacePackages(input.packageJsons ?? [])
+
   const stats = emptyStats()
   const timing: Timing = { read: 0, extract: 0, resolve: 0, total: 0 }
 
@@ -199,7 +214,13 @@ export async function analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
     const id = relativeTo(root, file.path)
     const fileDir = dirname(file.path)
     const scope = scopeFor(fileDir)
-    const ctx: ResolveContext = { root, aliases: scope.aliases, baseDir: scope.baseDir, has }
+    const ctx: ResolveContext = {
+      root,
+      aliases: scope.aliases,
+      baseDir: scope.baseDir,
+      packages,
+      has,
+    }
 
     const tExtract = now()
     const extracted = extract(source, file.path)
@@ -284,6 +305,7 @@ export async function analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
     timing,
     aliasCount: aliasScopes.reduce((n, s) => n + s.aliases.length, 0),
     aliasScopes,
+    packages,
   }
 }
 

@@ -72,11 +72,12 @@ Code Atlas 一次性回答这几个问题：
 
 三个开源仓库的实测（Node 侧跑同一份 `src/core` 代码，`npm run verify -- <路径>`）：
 
-| 仓库 | 代码文件 | 依赖边 | 导出符号 | 命中率 | 分析耗时 |
-|---|---|---|---|---|---|
-| [excalidraw](https://github.com/excalidraw/excalidraw) | 668 | 3327 | 2495 | **99.9%** | 279 ms |
-| [vite](https://github.com/vitejs/vite) | 1598 | 1846 | 2161 | **99.6%** | 305 ms |
-| [tanstack/query](https://github.com/TanStack/query) | 1230 | 1524 | 1767 | **99.7%** | 345 ms |
+| 仓库 | 代码文件 | 依赖边 | 导出符号 | 命中率 |
+|---|---|---|---|---|
+| [excalidraw](https://github.com/excalidraw/excalidraw) | 668 | 3329 | 2495 | **99.9%** |
+| [element-plus](https://github.com/element-plus/element-plus) | 2209 | 4488 | 2601 | **99.3%** |
+| [vite](https://github.com/vitejs/vite) | 1598 | 1928 | 2163 | **99.3%** |
+| [tanstack/query](https://github.com/TanStack/query) | 1230 | 1706 | 1767 | **99.8%** |
 
 **命中率的分母只算「本该解析成功的」**：外部 npm 包、静态资源、以及设计上无法解析的三类
 （构建产物、框架虚拟模块、超出所选根目录）都不进分母。

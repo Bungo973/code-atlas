@@ -142,3 +142,47 @@ export function fn() {}`,
     expect(r.exports).not.toContain('Ghost')
   })
 })
+
+/**
+ * ADR-025。stripNoise 原来用正则扫全文，不认识字符串字面量。
+ * excalidraw 里一个 `"../..//shortcut"` 的笔误，让它把收尾引号一起当注释删掉，
+ * 引号配对错位，下一条 import 也被吞掉——而命中率完全看不见。
+ */
+describe('注释剥离必须是字符串感知的', () => {
+  it('字符串里的 // 不是注释，一个笔误不该吃掉下一条 import', () => {
+    const src = [
+      'import { getShortcutKey } from "../..//shortcut";',
+      'import { useAtom } from "../../editor-jotai";',
+    ].join('\n')
+    const specs = extractByRegex(src).imports.map((i) => i.spec).sort()
+    expect(specs).toEqual(['../..//shortcut', '../../editor-jotai'])
+  })
+
+  it('字符串里的 /* 也不是注释', () => {
+    const src = [
+      'const glob = "src/*' + '*/*.ts";',
+      'import { a } from "./real";',
+    ].join('\n')
+    expect(extractByRegex(src).imports.map((i) => i.spec)).toEqual(['./real'])
+  })
+
+  it('真正的行注释仍然要剥掉', () => {
+    const src = ['// import { ghost } from "./ghost"', 'import { a } from "./real"'].join('\n')
+    expect(extractByRegex(src).imports.map((i) => i.spec)).toEqual(['./real'])
+  })
+
+  it('真正的块注释仍然要剥掉，且不吞掉后面的语句', () => {
+    const src = ['/* import { ghost } from "./ghost"', '   还是注释 */', 'import { a } from "./real"'].join('\n')
+    expect(extractByRegex(src).imports.map((i) => i.spec)).toEqual(['./real'])
+  })
+
+  it('行注释里的 URL 不会误伤后续代码', () => {
+    const src = ['// see https://example.com/a//b', 'import { a } from "./real"'].join('\n')
+    expect(extractByRegex(src).imports.map((i) => i.spec)).toEqual(['./real'])
+  })
+
+  it('转义引号不会提前结束字符串', () => {
+    const src = ['const s = "he said ' + String.fromCharCode(92) + '"// not a comment' + String.fromCharCode(92) + '""', 'import { a } from "./real"'].join('\n')
+    expect(extractByRegex(src).imports.map((i) => i.spec)).toEqual(['./real'])
+  })
+})

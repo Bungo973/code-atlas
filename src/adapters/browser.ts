@@ -6,6 +6,7 @@
  */
 
 import type { SourceFile, TsconfigSource } from '../core/analyze'
+import type { PackageJsonSource } from '../core/workspace'
 import { normalizeKey } from '../core/path'
 import { SKIP_DIRS, isCodeFile } from '../core/scan-config'
 
@@ -19,6 +20,8 @@ export type BrowserScan = {
   allPaths: Set<string>
   /** 目录树里找到的**全部** tsconfig/jsconfig，不只是根目录那份 */
   tsconfigs: TsconfigSource[]
+  /** 目录树里找到的全部 package.json，用于识别 monorepo 内部包（ADR-025） */
+  packageJsons: PackageJsonSource[]
   /** 目录遍历耗时（不含读取文件内容） */
   scanMs: number
   /** 目录下文件总数（含非代码文件） */
@@ -26,6 +29,7 @@ export type BrowserScan = {
 }
 
 const CONFIG_NAMES = new Set(['tsconfig.json', 'jsconfig.json'])
+const PACKAGE_NAME = 'package.json'
 
 export function isSupported(): boolean {
   return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function'
@@ -57,6 +61,7 @@ export async function scanDirectory(rootHandle: FileSystemDirectoryHandle): Prom
   const files: SourceFile[] = []
   const allPaths = new Set<string>()
   const configHandles: { path: string; handle: FileSystemFileHandle }[] = []
+  const packageHandles: { path: string; handle: FileSystemFileHandle }[] = []
   let totalFileCount = 0
 
   async function walk(dir: FileSystemDirectoryHandle, prefix: string): Promise<void> {
@@ -78,6 +83,7 @@ export async function scanDirectory(rootHandle: FileSystemDirectoryHandle): Prom
 
       // 整棵树都要收集，不能只看根目录——用户可能选中 monorepo 的父目录
       if (CONFIG_NAMES.has(name)) configHandles.push({ path, handle: fileHandle })
+      if (name === PACKAGE_NAME) packageHandles.push({ path, handle: fileHandle })
 
       if (isCodeFile(name)) {
         files.push({ path, read: async () => (await fileHandle.getFile()).text() })
@@ -101,12 +107,24 @@ export async function scanDirectory(rootHandle: FileSystemDirectoryHandle): Prom
     })
   )
 
+  const packageJsons: PackageJsonSource[] = []
+  await Promise.all(
+    packageHandles.map(async ({ path, handle }) => {
+      try {
+        packageJsons.push({ path, text: await (await handle.getFile()).text() })
+      } catch {
+        /* 读不到就跳过 */
+      }
+    })
+  )
+
   return {
     root,
     rootName,
     files,
     allPaths,
     tsconfigs,
+    packageJsons,
     scanMs: now() - t0,
     totalFileCount,
   }

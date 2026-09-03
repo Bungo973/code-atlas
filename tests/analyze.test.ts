@@ -99,7 +99,7 @@ describe('looksLikeAlias', () => {
   )
 
   it('npm 作用域包不会被误报——这是区分的关键', () => {
-    const ctx: ResolveContext = { root: '/r', aliases: [], baseDir: '/r', has: () => false }
+    const ctx: ResolveContext = { root: '/r', aliases: [], baseDir: '/r', packages: [], has: () => false }
     expect(resolveImport('@scope/pkg', '/r/a.ts', ctx)).toEqual({
       status: 'external',
       aliasLike: false,

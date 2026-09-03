@@ -2,18 +2,25 @@ import { describe, expect, it } from 'vitest'
 import { normalizeKey } from '../src/core/path'
 import { resolveImport } from '../src/core/resolver'
 import type { Alias, ResolveContext } from '../src/core/types'
+import type { WorkspacePackage } from '../src/core/workspace'
 
 const ROOT = '/repo'
 
 function ctxOf(
   files: string[],
-  opts: { root?: string; aliases?: Alias[]; baseDir?: string } = {}
+  opts: {
+    root?: string
+    aliases?: Alias[]
+    baseDir?: string
+    packages?: WorkspacePackage[]
+  } = {}
 ): ResolveContext {
   const set = new Set(files.map(normalizeKey))
   return {
     root: opts.root ?? ROOT,
     aliases: opts.aliases ?? [],
     baseDir: opts.baseDir ?? opts.root ?? ROOT,
+    packages: opts.packages ?? [],
     has: (p) => set.has(p),
   }
 }

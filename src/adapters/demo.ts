@@ -14,6 +14,7 @@
  */
 
 import type { SourceFile, TsconfigSource } from '../core/analyze'
+import type { PackageJsonSource } from '../core/workspace'
 import { normalizeKey } from '../core/path'
 import { isCodeFile } from '../core/scan-config'
 import type { BrowserScan } from './browser'
@@ -55,6 +56,7 @@ const ROOT_NAME = 'code-atlas'
 const ROOT = `/${ROOT_NAME}`
 
 const CONFIG_NAMES = new Set(['tsconfig.json', 'jsconfig.json'])
+const PACKAGE_NAME = 'package.json'
 
 /** glob 的键是仓库根起算的绝对路径（`/src/core/graph.ts`），拼上合成根即可 */
 const toRepoPath = (key: string) => `${ROOT}${key}`
@@ -78,6 +80,7 @@ export async function scanDemo(): Promise<BrowserScan> {
   const files: SourceFile[] = []
   const allPaths = new Set<string>()
   const configKeys: string[] = []
+  const packageKeys: string[] = []
 
   for (const key of keys) {
     const path = toRepoPath(key)
@@ -85,6 +88,7 @@ export async function scanDemo(): Promise<BrowserScan> {
 
     const name = key.slice(key.lastIndexOf('/') + 1)
     if (CONFIG_NAMES.has(name)) configKeys.push(key)
+    if (name === PACKAGE_NAME) packageKeys.push(key)
     // 同一份 isCodeFile 判定，不另写一套规则
     if (isCodeFile(name)) files.push({ path, read: RAW[key] })
   }
@@ -100,12 +104,24 @@ export async function scanDemo(): Promise<BrowserScan> {
     })
   )
 
+  const packageJsons: PackageJsonSource[] = []
+  await Promise.all(
+    packageKeys.map(async (key) => {
+      try {
+        packageJsons.push({ path: toRepoPath(key), text: await RAW[key]() })
+      } catch {
+        /* 读不到就跳过 */
+      }
+    })
+  )
+
   return {
     root: ROOT,
     rootName: ROOT_NAME,
     files,
     allPaths,
     tsconfigs,
+    packageJsons,
     scanMs: performance.now() - t0,
     totalFileCount: keys.length,
   }
