@@ -13,7 +13,7 @@ import { forceCollide, forceX, forceY } from 'd3-force'
 import type Graph from 'graphology'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d'
-import type { GraphMetrics, Impact } from '../core/graph'
+import type { Direction, GraphMetrics, Impact } from '../core/graph'
 import { aggregate } from '../core/aggregate'
 import { DEPTH_UNLIMITED, topLevelDir } from '../core/graph'
 import { isMatch, type MatchSet } from '../core/search'
@@ -116,6 +116,11 @@ function detachedOf(
   return new Set(nodes.map((n) => n.id).filter((id) => !main.has(id)))
 }
 
+const DIRECTION_OPTIONS: { value: Direction; label: string }[] = [
+  { value: 'dependents', label: '谁依赖它' },
+  { value: 'dependencies', label: '它依赖谁' },
+]
+
 const DEPTH_OPTIONS: { value: number; label: string }[] = [
   { value: 1, label: '1 跳' },
   { value: 2, label: '2 跳' },
@@ -189,6 +194,9 @@ const ALPHA_UNFOCUSED = 0.28
  */
 const COOLDOWN_TICKS = 200
 
+/** 自动取景允许的最大缩放。少量节点时宁可留白，也不要一个填满屏幕的巨圆 */
+const MAX_AUTO_ZOOM = 4
+
 export function GraphCanvas({
   graph,
   metrics,
@@ -198,6 +206,8 @@ export function GraphCanvas({
   impact,
   depth,
   onDepthChange,
+  direction,
+  onDirectionChange,
   matches,
   onDrillDown,
   colorOf,
@@ -211,6 +221,8 @@ export function GraphCanvas({
   impact: Impact | null
   depth: number
   onDepthChange: (d: number) => void
+  direction: Direction
+  onDirectionChange: (d: Direction) => void
   /** 搜索命中集合，与侧栏共用同一份判定（core/search.ts）。null = 没在筛选 */
   matches: MatchSet
   /** 从聚合视图点进一个目录：由 App 改筛选条件，画布只负责发出意图 */
@@ -267,6 +279,17 @@ export function GraphCanvas({
   useEffect(() => {
     setGrain(nodes.length > GRAIN_AUTO_THRESHOLD ? 1 : 0)
   }, [nodes])
+
+  /**
+   * 聚合态下选中一个文件时，自动切回文件级。
+   *
+   * 不做的话：详情栏更新了，侧栏定位了，**而画布上根本不存在这个节点**——
+   * data.nodes 装的是目录，find(n => n.id === selected) 必然落空。
+   * 「焦点对象必须可见」是最底线的一条，宁可换视图也不能只更新半边（I-01）。
+   */
+  useEffect(() => {
+    if (selected) setGrain(0)
+  }, [selected])
 
   /**
    * 筛选清空时自动退出隔离。
@@ -582,7 +605,14 @@ export function GraphCanvas({
     if (impact === null) return false
     const hs = hopsOf(sourceId)
     const ht = hopsOf(targetId)
-    return hs !== null && ht !== null && hs === ht + 1
+    if (hs === null || ht === null) return false
+    /**
+     * 边的方向是 source import target，两种关系模式下传播方向相反：
+     *   谁依赖它  影响沿反向传播 → 跳数(source) = 跳数(target) + 1
+     *   它依赖谁  阅读沿正向推进 → 跳数(target) = 跳数(source) + 1
+     * 用错方向的话高亮出来的是一棵朝相反方向张开的树，看着「有反应」却全是错的。
+     */
+    return impact.direction === 'dependents' ? hs === ht + 1 : ht === hs + 1
   }
 
   /** 一个节点最终画多淡：筛选优先，其次聚焦 */
@@ -709,6 +739,14 @@ export function GraphCanvas({
           nodeLabel={() => ''}
           nodeRelSize={3}
           cooldownTicks={COOLDOWN_TICKS}
+          /**
+           * 自动取景的缩放上限。
+           *
+           * zoomToFit 只管铺满画布：图上只剩一个节点时它会把那个圆放大到几百像素，
+           * 既认不出是什么，也丢掉了「它在整张图的哪里」这个信息。
+           * 少量节点时宁可留白，也不要一个填满屏幕的巨圆（I-12）。
+           */
+          maxZoom={MAX_AUTO_ZOOM}
           /**
            * 布局收敛后自动适应窗口。
            *
@@ -887,17 +925,44 @@ export function GraphCanvas({
           ))}
         </div>
 
+        {/*
+          关系方向。放在跳数控件前面——先问「看哪个方向」，再问「看几跳」，
+          这个顺序和用户脑子里的顺序一致。
+          没选中文件时禁用：两个控件都只作用于焦点文件，
+          让它们在无焦点时仍可点击，用户会以为点了没生效（I-11）。
+        */}
         <div
-          className="segmented"
+          className={`segmented${selected ? '' : ' is-disabled'}`}
           role="radiogroup"
-          aria-label="影响范围层级"
-          title="影响范围向外传播几跳"
+          aria-label="关系方向"
+          title={selected ? '看这个文件的哪一侧' : '先选中一个文件'}
+        >
+          {DIRECTION_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              role="radio"
+              aria-checked={direction === o.value}
+              disabled={!selected}
+              className={direction === o.value ? 'is-on' : undefined}
+              onClick={() => onDirectionChange(o.value)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+
+        <div
+          className={`segmented${selected ? '' : ' is-disabled'}`}
+          role="radiogroup"
+          aria-label="关系跳数"
+          title={selected ? '关系向外传播几跳' : '先选中一个文件'}
         >
           {DEPTH_OPTIONS.map((o) => (
             <button
               key={o.label}
               role="radio"
               aria-checked={depth === o.value}
+              disabled={!selected}
               className={depth === o.value ? 'is-on' : undefined}
               onClick={() => onDepthChange(o.value)}
             >
@@ -959,7 +1024,8 @@ export function GraphCanvas({
         {metrics.cycles.length > 0 && showCycles && (
           <span className="legend-item">
             <i className="legend-ring" style={{ borderColor: STATUS.critical }} />
-            循环依赖 <b>{metrics.inCycle.size}</b>
+            {/* 单位是文件数，不是循环组数——抽屉导航里那个才是组数 */}
+            循环中 <b>{metrics.inCycle.size}</b> 个文件
           </span>
         )}
       </div>

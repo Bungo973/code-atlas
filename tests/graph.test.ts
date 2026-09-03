@@ -134,7 +134,7 @@ describe('影响范围与依赖范围', () => {
   })
 
   it('dependenciesOf 沿正向边：app 依赖 page 和 util', () => {
-    expect([...dependenciesOf(g, 'app')].sort()).toEqual(['page', 'util'])
+    expect([...dependenciesOf(g, 'app').reached].sort()).toEqual(['page', 'util'])
   })
 
   it('不包含自身，不波及无关节点', () => {
@@ -208,5 +208,43 @@ describe('topLevelDir', () => {
     ['vite.config.ts', '(root)'],
   ])('%s → %s', (id, expected) => {
     expect(topLevelDir(id)).toBe(expected)
+  })
+})
+
+/**
+ * I-09：只有「谁依赖它」时，从入口点出发永远是 0，用户卡在「0 个文件受影响」上——
+ * 而入口点恰恰是最该用来往下读的起点。两个方向必须对称可用。
+ */
+describe('关系方向', () => {
+  // d → c → b → a
+  const chain = make(['a', 'b', 'c', 'd'], [['b', 'a'], ['c', 'b'], ['d', 'c']])
+
+  it('默认是 dependents，结果里带方向标记', () => {
+    const r = impactOf(chain, 'b')
+    expect(r.direction).toBe('dependents')
+    expect([...r.reached].sort()).toEqual(['c', 'd'])
+  })
+
+  it('dependencies 沿正向边，跳数语义一致', () => {
+    const r = dependenciesOf(chain, 'c')
+    expect(r.direction).toBe('dependencies')
+    expect(r.depth.get('b')).toBe(1)
+    expect(r.depth.get('a')).toBe(2)
+  })
+
+  it('两个方向互为镜像：a 在 b 的下游，b 就在 a 的上游', () => {
+    expect(impactOf(chain, 'a').reached.has('d')).toBe(true)
+    expect(dependenciesOf(chain, 'd').reached.has('a')).toBe(true)
+  })
+
+  it('入口点的影响范围为空，但依赖范围不空', () => {
+    expect(impactOf(chain, 'd').total).toBe(0)
+    expect(dependenciesOf(chain, 'd').total).toBe(3)
+  })
+
+  it('限层对两个方向同样生效', () => {
+    const r = dependenciesOf(chain, 'd', 1)
+    expect([...r.reached]).toEqual(['c'])
+    expect(r.total).toBe(3)
   })
 })

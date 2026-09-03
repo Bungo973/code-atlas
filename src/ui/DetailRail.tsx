@@ -77,7 +77,9 @@ export function DetailRail({
             className="detail-field"
             title={truncated ? `沿反向依赖最远 ${impact!.farthest} 跳` : undefined}
           >
-            <b>{impact?.reached.size ?? 0}</b> 个文件受影响
+            {/* 措辞必须随方向变——同一个数字在两个方向下含义完全不同，不可比 */}
+            <b>{impact?.reached.size ?? 0}</b>{' '}
+            {impact?.direction === 'dependencies' ? '个文件被它依赖' : '个文件受影响'}
             {truncated && <i className="muted"> / 全部 {impact!.total}</i>}
           </span>
           <span className="detail-field">

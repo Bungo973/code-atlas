@@ -1173,3 +1173,31 @@ select {
 .detail-summary:hover b {
   color: var(--ink);
 }
+
+/* 分段控件整体不可用时（没选中文件的关系方向/跳数） */
+.segmented.is-disabled {
+  opacity: 0.4;
+}
+
+.segmented button:disabled {
+  cursor: not-allowed;
+}
+
+/*
+ * 表格里可点的整行文本。循环成员必须逐个可点，
+ * 所以它是按钮，但视觉上要保持普通代码行的样子。
+ */
+.link-row {
+  border: 0;
+  background: transparent;
+  padding: 1px 0;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.link-row:hover code {
+  color: var(--ink);
+  text-decoration: underline;
+}

@@ -52,12 +52,19 @@ export function NotesDrawer({
     onClose()
   }
 
+  // 真正被别人依赖过的文件数——排行表里也正是筛的这一批
+  let hubCount = 0
+  for (const n of metrics.inDegree.values()) if (n > 0) hubCount++
+
   const nav: { id: SectionId; label: string; count?: number; tone?: string }[] = [
-    { id: 'hubs', label: '枢纽文件', count: metrics.inDegree.size },
+    // inDegree 每个节点都有条目，它的 size 是**全部文件数**，不是枢纽数。
+    // 原来标成「枢纽文件 2209」，等于宣称这个仓库每个文件都是枢纽（I-06）。
+    { id: 'hubs', label: '依赖排行', count: hubCount },
     { id: 'entries', label: '入口点', count: metrics.entryPoints.length },
     {
       id: 'cycles',
       label: '循环依赖',
+      // 单位是**组**，不是文件。画布图例数的是成员文件数，两处必须各自写清单位
       count: metrics.cycles.length,
       tone: metrics.cycles.length ? 'bad' : undefined,
     },
@@ -189,15 +196,24 @@ function Cycles({ metrics, onJump }: { metrics: Metrics; onJump: (id: string) =>
   }
   return (
     <div className="card">
-      <h3>互相依赖、无法单独抽离的文件组</h3>
+      <h3>
+        互相依赖、无法单独抽离的文件组 —— {metrics.cycles.length} 组，涉及{' '}
+        {metrics.inCycle.size} 个文件
+      </h3>
       <table className="data-table">
         <tbody>
+          {/*
+            成员逐个可点。原来整行绑 onJump(cycle[0])，点第 5 个成员跳到第 1 个——
+            「点谁就到谁」是最基本的约定，违反它会让用户不再信任任何跳转（I-04）。
+          */}
           {metrics.cycles.map((cycle, i) => (
-            <tr key={i} className="clickable" onClick={() => onJump(cycle[0])}>
+            <tr key={i}>
               <td>
                 {cycle.map((f) => (
                   <div key={f}>
-                    <code>{f}</code>
+                    <button className="link-row" onClick={() => onJump(f)}>
+                      <code>{f}</code>
+                    </button>
                   </div>
                 ))}
               </td>
@@ -220,7 +236,8 @@ function DeadCode({
   if (!deadCode || deadCode.suspects.length === 0) {
     return (
       <div className="card">
-        <h3>所有导出符号在仓库内都有引用</h3>
+        {/* 零结果也可能来自豁免，不能宣称每个导出都有显式引用 */}
+        <h3>未发现符合当前规则的疑似死代码</h3>
       </div>
     )
   }

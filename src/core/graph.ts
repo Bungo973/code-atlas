@@ -126,9 +126,23 @@ export type Impact = {
   maxDepth: number
   /** 不限层级时最远的跳数 */
   farthest: number
+  /** 这份结果是哪个方向算出来的。界面上必须说清，两个方向的数字不可比 */
+  direction: Direction
 }
 
 export const DEPTH_UNLIMITED = Infinity
+
+/**
+ * 关系方向。
+ *
+ * `dependents`  谁依赖它 —— 沿反向边。改动这个文件会波及谁。
+ * `dependencies` 它依赖谁 —— 沿正向边。想读懂这个文件还要读哪些。
+ *
+ * 两个方向是**对称的两个问题**，但界面上长期只有前者：
+ * 从入口点出发时受影响文件恒为 0，用户就卡在「0 个文件受影响」上，
+ * 而入口点恰恰是最该被用来「往下读」的起点。
+ */
+export type Direction = 'dependents' | 'dependencies'
 
 /**
  * 影响范围（blast radius）：改动 node 之后，沿反向边可达的全部文件。
@@ -142,22 +156,33 @@ export const DEPTH_UNLIMITED = Infinity
  * 所以 `total` 始终可得——UI 要能同时说清「这一层有几个」和「一共有几个」，
  * 否则限制层级就变成了瞒报。
  */
-export function impactOf(g: Graph, node: string, maxDepth: number = DEPTH_UNLIMITED): Impact {
+export function impactOf(
+  g: Graph,
+  node: string,
+  maxDepth: number = DEPTH_UNLIMITED,
+  direction: Direction = 'dependents'
+): Impact {
   const depth = new Map<string, number>()
   const seen = new Set<string>([node])
   let level = [node]
   let d = 0
   let farthest = 0
 
+  // 两个方向唯一的差别就是走哪条边；跳数、饱和、限层的语义完全一致
+  const walk =
+    direction === 'dependents'
+      ? (n: string, visit: (id: string) => void) => g.forEachInNeighbor(n, visit)
+      : (n: string, visit: (id: string) => void) => g.forEachOutNeighbor(n, visit)
+
   while (level.length > 0) {
     d++
     const next: string[] = []
     for (const cur of level) {
-      g.forEachInNeighbor(cur, (pred) => {
-        if (seen.has(pred)) return
-        seen.add(pred)
-        depth.set(pred, d)
-        next.push(pred)
+      walk(cur, (neighbor) => {
+        if (seen.has(neighbor)) return
+        seen.add(neighbor)
+        depth.set(neighbor, d)
+        next.push(neighbor)
       })
     }
     if (next.length > 0) farthest = d
@@ -167,23 +192,19 @@ export function impactOf(g: Graph, node: string, maxDepth: number = DEPTH_UNLIMI
   const reached = new Set<string>()
   for (const [id, hops] of depth) if (hops <= maxDepth) reached.add(id)
 
-  return { root: node, depth, reached, total: depth.size, maxDepth, farthest }
+  return { root: node, depth, reached, total: depth.size, maxDepth, farthest, direction }
 }
 
-/** 依赖范围：node 直接和间接依赖的全部文件（沿正向边） */
-export function dependenciesOf(g: Graph, node: string): Set<string> {
-  const seen = new Set<string>([node])
-  const queue = [node]
-  for (let i = 0; i < queue.length; i++) {
-    g.forEachOutNeighbor(queue[i], (succ) => {
-      if (!seen.has(succ)) {
-        seen.add(succ)
-        queue.push(succ)
-      }
-    })
-  }
-  seen.delete(node)
-  return seen
+/**
+ * 依赖范围：node 直接和间接依赖的全部文件。
+ * 与 impactOf 是同一条 BFS，只是换个方向走——所以跳数、限层、饱和的语义完全一致。
+ */
+export function dependenciesOf(
+  g: Graph,
+  node: string,
+  maxDepth: number = DEPTH_UNLIMITED
+): Impact {
+  return impactOf(g, node, maxDepth, "dependencies")
 }
 
 /**

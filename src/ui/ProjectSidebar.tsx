@@ -62,11 +62,18 @@ export function ProjectSidebar({
     () =>
       flattenVisible(
         root,
-        // 搜索时强制全展开，否则命中项还是藏在折叠的目录里
-        matches ? allDirIds(root) : expanded,
+        /**
+         * **只有文本搜索才强制全展开。**
+         *
+         * 原来是「只要有任何筛选就全展开」，于是按目录分面筛选时整棵树被摊平，
+         * 用户点折叠没有任何反应——因为下一次渲染又被强制展开了（I-10）。
+         * 目录筛选是「缩小浏览范围」，树本身还应该正常可折叠；
+         * 只有搜索需要展开，否则命中项藏在折叠目录里根本看不到。
+         */
+        filter.query.trim() ? allDirIds(root) : expanded,
         matches ? (n) => matches.has(n.id) : undefined
       ),
-    [root, expanded, matches]
+    [root, expanded, matches, filter.query]
   )
 
   const virtualizer = useVirtualizer({

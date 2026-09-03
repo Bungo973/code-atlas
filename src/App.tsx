@@ -10,7 +10,13 @@ import { useCallback, useMemo, useState } from 'react'
 import { isSupported, pickDirectory, scanDirectory, type BrowserScan } from './adapters/browser'
 import { demoFileCount, scanDemo } from './adapters/demo'
 import { analyze, type AnalyzeResult } from './core/analyze'
-import { buildGraph, computeMetrics, impactOf, topLevelDir } from './core/graph'
+import {
+  buildGraph,
+  computeMetrics,
+  impactOf,
+  topLevelDir,
+  type Direction,
+} from './core/graph'
 import { applyFilter, EMPTY_FILTER, facetsOf, type FileFilter } from './core/search'
 import { findSuspectedDeadSymbols, usageOf } from './core/symbols'
 import { DetailRail, type NotesSection } from './ui/DetailRail'
@@ -41,6 +47,11 @@ export function App() {
    * 每次点击都高亮同一片（见 ADR-020）。总数照常显示，不会因为限层而瞒报。
    */
   const [impactDepth, setImpactDepth] = useState<number>(2)
+  /**
+   * 关系方向。默认「谁依赖它」——最常见的问题是「改这个会波及谁」。
+   * 但从入口点出发时那个答案恒为 0，所以必须能切到「它依赖谁」（I-09）。
+   */
+  const [direction, setDirection] = useState<Direction>('dependents')
   /** 筛选条件提到这里：侧栏和画布必须用同一份命中判定，否则两边数字会对不上 */
   const [filter, setFilter] = useState<FileFilter>(EMPTY_FILTER)
 
@@ -121,8 +132,11 @@ export function App() {
 
   /** 选中文件的影响范围：改动它会波及谁。侧栏、画布、详情栏共用这一份 */
   const impact = useMemo(
-    () => (graphBundle && selected ? impactOf(graphBundle.graph, selected, impactDepth) : null),
-    [graphBundle, selected, impactDepth]
+    () =>
+      graphBundle && selected
+        ? impactOf(graphBundle.graph, selected, impactDepth, direction)
+        : null,
+    [graphBundle, selected, impactDepth, direction]
   )
 
   const deadCode = useMemo(() => {
@@ -265,6 +279,8 @@ export function App() {
               impact={impact}
               depth={impactDepth}
               onDepthChange={setImpactDepth}
+              direction={direction}
+              onDirectionChange={setDirection}
               matches={matches}
               /* 聚合视图点一个目录：换成「只看这个目录」的筛选，画布自己切回文件级 */
               onDrillDown={(dir) => setFilter({ ...EMPTY_FILTER, dirs: [dir] })}
