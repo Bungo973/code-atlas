@@ -258,6 +258,102 @@ code,
   border-color: var(--line);
 }
 
+/* ── 筛选条：默认折叠，展开后是两组可切换的分面 ── */
+
+.sidebar-filters {
+  padding: 0 10px 6px;
+}
+
+.sidebar-filters-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.sidebar-filters-head .quiet {
+  padding: 2px 4px;
+  font-size: 11px;
+}
+
+.filter-count {
+  display: inline-block;
+  margin-left: 5px;
+  min-width: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 400;
+  text-align: center;
+}
+
+.sidebar-filters-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 7px;
+  /* 分面很多时自己滚，不许把文件树挤没 */
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.facet-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.facet-label {
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+.facet-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chip {
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-row);
+  background: transparent;
+  color: var(--ink-2);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+
+.chip i {
+  font-style: normal;
+  color: var(--ink-3);
+  margin-left: 3px;
+}
+
+.chip:hover {
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.chip--on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.chip--on i {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.canvas-tools .is-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .sidebar-body {
   flex: 1;
   overflow: auto;

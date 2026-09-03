@@ -186,8 +186,8 @@ export function dependenciesOf(g: Graph, node: string): Set<string> {
   return seen
 }
 
-/** 顶层目录，用于着色 */
-export function topLevelDir(id: string): string {
-  const i = id.indexOf('/')
-  return i < 0 ? '(root)' : id.slice(0, i)
-}
+/**
+ * 顶层目录的真身已挪到 path.ts（它是路径操作，且 search.ts 也要用）。
+ * 这里保留转出，免得所有调用点跟着改。
+ */
+export { topLevelDir } from './path'

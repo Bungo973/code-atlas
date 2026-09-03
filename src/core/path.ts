@@ -79,6 +79,18 @@ function normalizeSegments(input: string): string {
   return joined === '' ? '/' : joined
 }
 
+/**
+ * 顶层目录，用于着色和按目录筛选。根目录下的文件归为 `(root)`。
+ *
+ * 放在这里而不是 graph.ts：它是纯粹的路径操作，而 search.ts 也要用它。
+ * 留在 graph.ts 的话，筛选逻辑会为了一个一行函数把 graphology 拖进依赖链，
+ * 或者更糟——在两处各写一份，然后慢慢长歪。
+ */
+export function topLevelDir(id: string): string {
+  const i = id.indexOf('/')
+  return i < 0 ? '(root)' : id.slice(0, i)
+}
+
 /** 求 p 相对 root 的路径，用作图节点的稳定 id */
 export function relativeTo(root: string, p: string): string {
   const r = toPosix(root).replace(/\/+$/, '')

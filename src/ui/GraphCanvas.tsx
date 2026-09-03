@@ -126,6 +126,21 @@ export function GraphCanvas({
    * **用户手动调过的视角不能被抢走**。
    */
   const fittedFor = useRef<unknown>(null)
+  /**
+   * 隔离视图：只把筛选命中的节点交给力导向图，重新布局。
+   *
+   * 淡化解决不了毛线球——被调暗的节点仍然参与布局，命中项照样散落在
+   * 668 个点的乱麻里。**要让子集变清楚，必须让它自己重新收敛。**
+   */
+  const [isolate, setIsolate] = useState(false)
+
+  /**
+   * 筛选清空时自动退出隔离。
+   * 不做的话用户点了「清空」会得到一张空画布，然后完全不知道发生了什么。
+   */
+  useEffect(() => {
+    if (!matches) setIsolate(false)
+  }, [matches])
 
   /**
    * 循环依赖占比过高时（excalidraw 是 346/668），给一半以上的节点画红圈
@@ -148,7 +163,8 @@ export function GraphCanvas({
   }, [])
 
   const data = useMemo(() => {
-    const present = nodes.filter((n) => graph.hasNode(n.id))
+    const shown = isolate && matches ? matches : null
+    const present = nodes.filter((n) => graph.hasNode(n.id) && (!shown || shown.has(n.id)))
 
     /**
      * 节点大小改用**直接入度**，且半径映射到固定像素区间。
@@ -158,7 +174,9 @@ export function GraphCanvas({
      * 668 个这么大的圆必然糊成一团。
      *
      * 直接入度不饱和，且「多少人直接 import 我」本来就是「枢纽」的字面含义。
-     * 再按当前仓库的最大值归一化，半径恒定落在 [2.5, 11]px——
+     * 再按**当前视图**的最大值归一化，半径恒定落在 [2.5, 11]px——
+     * 隔离时按子集重新归一化是有意的：全仓库的最大值会把子集里的差异压平。
+     * 入度本身仍然是全仓库口径（「10 个文件 import 我」是客观事实，不随视图变），
      * **无论仓库多大，画面密度都可控**。传递入度保留在提示框和影响范围里，那里它才有意义。
      */
     let maxDirect = 1
@@ -184,10 +202,12 @@ export function GraphCanvas({
 
     const links: CanvasLink[] = []
     graph.forEachDirectedEdge((_e, _a, source, target) => {
+      // 隔离时只保留两端都在子集里的边——力导向图收到指向不存在节点的边会直接崩
+      if (shown && !(shown.has(source) && shown.has(target))) return
       links.push({ source, target })
     })
     return { nodes: canvasNodes, links, dense: canvasNodes.length > 220 }
-  }, [graph, metrics, nodes, colorOf])
+  }, [graph, metrics, nodes, colorOf, isolate, matches])
 
   /**
    * 力的参数随规模调整，并**加入碰撞力**——d3-force 默认不含碰撞，
@@ -260,6 +280,17 @@ export function GraphCanvas({
     if (!isMatch(matches, id)) return ALPHA_FILTERED
     return focused(id) ? 1 : ALPHA_UNFOCUSED
   }
+
+  /**
+   * 图例的计数按**画面上真实存在的节点**重算，不用 App 传来的全仓库计数。
+   * 隔离时画面上只剩 10 个点，图例却写着「src 22」，就是又一处
+   * 「同一个东西在两处显示两个数字」（ADR-013 踩过一次）。
+   */
+  const legendCounts = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const n of data.nodes) m.set(n.color, (m.get(n.color) ?? 0) + 1)
+    return m
+  }, [data.nodes])
 
   /** 位置索引图：全图缩略 + 当前视口矩形 */
   const drawLocator = useCallback(() => {
@@ -503,6 +534,15 @@ export function GraphCanvas({
             </button>
           ))}
         </div>
+        <label className={matches ? undefined : 'is-disabled'}>
+          <input
+            type="checkbox"
+            checked={isolate}
+            disabled={!matches}
+            onChange={(e) => setIsolate(e.target.checked)}
+          />
+          <span title={matches ? '只保留筛选命中的节点，重新布局' : '先筛选再隔离'}>隔离</span>
+        </label>
         <label>
           <input
             type="checkbox"
@@ -526,15 +566,20 @@ export function GraphCanvas({
       <div className="canvas-legend">
         {matches && (
           <span className="legend-item legend-filter">
-            筛选中 <b>{matches.size}</b> / {data.nodes.length}
+            {isolate ? '隔离中' : '筛选中'} <b>{matches.size}</b> / {nodes.length}
           </span>
         )}
-        {legend.map((l) => (
-          <span key={l.label} className="legend-item">
-            <i style={{ background: l.color }} />
-            {l.label} <b>{l.count}</b>
-          </span>
-        ))}
+        {legend.map((l) => {
+          const n = legendCounts.get(l.color) ?? 0
+          // 画面上一个都不剩的目录，图例里也不该占位置
+          if (n === 0) return null
+          return (
+            <span key={l.label} className="legend-item">
+              <i style={{ background: l.color }} />
+              {l.label} <b>{n}</b>
+            </span>
+          )
+        })}
         {metrics.cycles.length > 0 && showCycles && (
           <span className="legend-item">
             <i className="legend-ring" style={{ borderColor: STATUS.critical }} />

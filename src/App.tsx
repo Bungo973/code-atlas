@@ -11,7 +11,7 @@ import { isSupported, pickDirectory, scanDirectory, type BrowserScan } from './a
 import { demoFileCount, scanDemo } from './adapters/demo'
 import { analyze, type AnalyzeResult } from './core/analyze'
 import { buildGraph, computeMetrics, impactOf, topLevelDir } from './core/graph'
-import { matchFiles } from './core/search'
+import { applyFilter, EMPTY_FILTER, facetsOf, type FileFilter } from './core/search'
 import { findSuspectedDeadSymbols, usageOf } from './core/symbols'
 import { DetailRail } from './ui/DetailRail'
 import { GraphCanvas } from './ui/GraphCanvas'
@@ -37,8 +37,8 @@ export function App() {
    * 每次点击都高亮同一片（见 ADR-020）。总数照常显示，不会因为限层而瞒报。
    */
   const [impactDepth, setImpactDepth] = useState<number>(2)
-  /** 搜索词提到这里：侧栏和画布必须用同一份命中判定，否则两边数字会对不上 */
-  const [query, setQuery] = useState('')
+  /** 筛选条件提到这里：侧栏和画布必须用同一份命中判定，否则两边数字会对不上 */
+  const [filter, setFilter] = useState<FileFilter>(EMPTY_FILTER)
 
   const sidebar = useResizableWidth({
     storageKey: 'code-atlas.sidebar-width',
@@ -58,6 +58,9 @@ export function App() {
       setScan(null)
       setProgress(null)
       setNotesOpen(false)
+      // 换仓库必须清筛选：上一个仓库的目录名在新仓库里通常一个都不存在，
+      // 留着就是打开后看到一片空
+      setFilter(EMPTY_FILTER)
       setIsDemo(demo)
       setBusy(true)
       try {
@@ -140,7 +143,10 @@ export function App() {
   const fileIds = useMemo(() => result?.nodes.map((n) => n.id) ?? [], [result])
 
   /** null = 没在筛选（全部正常显示），空集合 = 筛了但一个没中（全部淡出） */
-  const matches = useMemo(() => matchFiles(fileIds, query), [fileIds, query])
+  const matches = useMemo(() => applyFilter(fileIds, filter), [fileIds, filter])
+
+  /** 可选的筛选项，只列真实存在的 */
+  const facets = useMemo(() => facetsOf(fileIds), [fileIds])
 
   const ready = result && scan && graphBundle
 
@@ -216,8 +222,9 @@ export function App() {
               metrics={graphBundle.metrics}
               colorOf={graphBundle.colorOf}
               highlight={impact?.reached ?? null}
-              query={query}
-              onQueryChange={setQuery}
+              filter={filter}
+              onFilterChange={setFilter}
+              facets={facets}
               matches={matches}
             />
           ) : (

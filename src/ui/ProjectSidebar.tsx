@@ -9,7 +9,14 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GraphMetrics } from '../core/graph'
-import type { MatchSet } from '../core/search'
+import {
+  activeFacetCount,
+  EMPTY_FILTER,
+  type Facet,
+  type FileFilter,
+  type MatchSet,
+  toggleFacet,
+} from '../core/search'
 import { ancestorsOf, buildTree, defaultExpanded, flattenVisible, type TreeNode } from '../core/tree'
 import { STATUS } from './palette'
 
@@ -20,8 +27,9 @@ export function ProjectSidebar({
   metrics,
   colorOf,
   highlight,
-  query,
-  onQueryChange,
+  filter,
+  onFilterChange,
+  facets,
   matches,
 }: {
   fileIds: string[]
@@ -32,11 +40,13 @@ export function ProjectSidebar({
   /** 影响范围高亮集合，与画布共享同一份选择状态 */
   highlight: Set<string> | null
   /**
-   * 搜索状态由 App 持有，**不是这里的私有 state**。
+   * 筛选状态由 App 持有，**不是这里的私有 state**。
    * 画布要用同一份命中集合，各存各的迟早会出现「侧栏说 3 个匹配、画布亮 5 个」。
    */
-  query: string
-  onQueryChange: (q: string) => void
+  filter: FileFilter
+  onFilterChange: (f: FileFilter) => void
+  /** 可选的筛选项，只含真实存在的目录和扩展名 */
+  facets: { dirs: Facet[]; exts: Facet[] }
   /** null = 没在筛选。判定逻辑在 core/search.ts，两边共用 */
   matches: MatchSet
 }) {
@@ -93,22 +103,28 @@ export function ProjectSidebar({
         <input
           className="sidebar-search"
           placeholder="搜索文件…　空格分词"
-          value={query}
-          onChange={(e) => onQueryChange(e.target.value)}
+          value={filter.query}
+          onChange={(e) => onFilterChange({ ...filter, query: e.target.value })}
           // Esc 清空是搜索框的通用约定，没有它只能一个字一个字退
           onKeyDown={(e) => {
-            if (e.key === 'Escape' && query) {
+            if (e.key === 'Escape' && filter.query) {
               e.stopPropagation()
-              onQueryChange('')
+              onFilterChange({ ...filter, query: '' })
             }
           }}
         />
-        {query && (
-          <button className="sidebar-search-clear" onClick={() => onQueryChange('')} title="清空">
+        {filter.query && (
+          <button
+            className="sidebar-search-clear"
+            onClick={() => onFilterChange({ ...filter, query: '' })}
+            title="清空"
+          >
             ×
           </button>
         )}
       </div>
+
+      <FilterBar filter={filter} onChange={onFilterChange} facets={facets} />
 
       <div className="sidebar-body" ref={bodyRef}>
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
@@ -182,6 +198,88 @@ export function ProjectSidebar({
 
       <div className="sidebar-footer">
         {matches ? `${matchCount} / ${fileIds.length} 个文件` : `${fileIds.length} 个文件`}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 筛选条。**默认折叠**——268px 宽的侧栏里，十几个筛选项换行铺开会把文件树挤没，
+ * 而大多数时候用户只是想看看目录结构。折叠时把生效条件数显示在按钮上，
+ * 否则收起来之后没人知道当前还筛着东西。
+ */
+function FilterBar({
+  filter,
+  onChange,
+  facets,
+}: {
+  filter: FileFilter
+  onChange: (f: FileFilter) => void
+  facets: { dirs: Facet[]; exts: Facet[] }
+}) {
+  const [open, setOpen] = useState(false)
+  const active = activeFacetCount(filter)
+
+  return (
+    <div className="sidebar-filters">
+      <div className="sidebar-filters-head">
+        <button className="quiet" onClick={() => setOpen(!open)}>
+          {open ? '▾' : '▸'} 筛选
+          {active > 0 && <b className="filter-count">{active}</b>}
+        </button>
+        {active > 0 && (
+          <button className="quiet" onClick={() => onChange(EMPTY_FILTER)}>
+            清空
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="sidebar-filters-body">
+          <FacetGroup
+            label="目录"
+            items={facets.dirs}
+            picked={filter.dirs}
+            onToggle={(v) => onChange({ ...filter, dirs: toggleFacet(filter.dirs, v) })}
+          />
+          <FacetGroup
+            label="类型"
+            items={facets.exts}
+            picked={filter.exts}
+            onToggle={(v) => onChange({ ...filter, exts: toggleFacet(filter.exts, v) })}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FacetGroup({
+  label,
+  items,
+  picked,
+  onToggle,
+}: {
+  label: string
+  items: Facet[]
+  picked: string[]
+  onToggle: (value: string) => void
+}) {
+  if (items.length === 0) return null
+  return (
+    <div className="facet-group">
+      <span className="facet-label">{label}</span>
+      <div className="facet-chips">
+        {items.map((f) => (
+          <button
+            key={f.value}
+            className={`chip${picked.includes(f.value) ? ' chip--on' : ''}`}
+            onClick={() => onToggle(f.value)}
+            title={`${f.value} · ${f.count} 个文件`}
+          >
+            {f.value} <i>{f.count}</i>
+          </button>
+        ))}
       </div>
     </div>
   )
