@@ -25,7 +25,9 @@ _Avoid_: 引用（留给符号级）、link、import 关系
 _Avoid_: 调用（那是 L3，本项目不做）、依赖
 
 **导出符号**：
-一个文件对外暴露的具名导出或默认导出。id 形如 `src/utils.ts#format`。
+一个文件对外暴露的具名导出或默认导出，**包括 `export type` / `interface` / `enum`
+这类只存在于类型层的导出**（它们编译后会被擦除，但在 TS 仓库里同样是 API——见 ADR-023）。
+id 形如 `src/utils.ts#format`。
 _Avoid_: API、接口、符号（单说「符号」太泛）
 
 ### 分析层次

@@ -174,9 +174,23 @@ export function extract(source: string, filename = 'file.ts'): ExtractResult {
       mergeRecord(bySpec, i.n, clause)
     }
 
+    /**
+     * 导出必须**合并**正则的结果，不能只信 lexer。
+     *
+     * es-module-lexer 报的是**运行时**导出，而 `export type` / `export interface`
+     * 在编译后会被完全擦除，所以它一个都不报——这符合 ES 规范，不是它的 bug。
+     * 后果是：一个纯类型模块（比如 src/core/types.ts）会显示「0 个导出」，
+     * 而侧栏同时显示有 10 个文件直接引用它。**十个人 import 一个没有导出的文件**，
+     * 这个矛盾在界面上是直接可见的——ADR-023。
+     *
+     * import 侧仍然只信 lexer（它在那边是权威的），只有 export 侧做并集。
+     */
+    const merged = new Set(exports.map((e) => e.n))
+    for (const name of extractByRegex(source).exports) merged.add(name)
+
     return {
       imports: [...bySpec.values()],
-      exports: exports.map((e) => e.n),
+      exports: [...merged],
       usedFallback: false,
     }
   } catch {

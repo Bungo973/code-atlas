@@ -104,3 +104,41 @@ describe('L2 可行性：exports 是否白送', () => {
     expect(r.exports).toEqual(expect.arrayContaining(['format', 'default']))
   })
 })
+
+/**
+ * ADR-023。原来这一组用例全是「含运行时导出的混合模块」，lexer 在那些输入上返回非空，
+ * 断言就过了——**没有一个用例是纯类型模块**，于是漏报了 13%–40% 的导出符号而全绿。
+ */
+describe('类型导出（lexer 看不见的那部分）', () => {
+  it('纯类型模块不能返回空导出', () => {
+    const r = extract(
+      `export type FileNode = { id: string }\nexport interface Opts { a: number }`,
+      'types.ts'
+    )
+    // lexer 成功，所以不会走兜底——正是这一点让原来的 bug 藏住了
+    expect(r.usedFallback).toBe(false)
+    expect(r.exports).toEqual(expect.arrayContaining(['FileNode', 'Opts']))
+  })
+
+  it('type / interface / enum 与运行时导出并存时全都要有', () => {
+    const r = extract(
+      `export type T = 1
+export interface I { a: 1 }
+export enum E { A }
+export const REAL = 1
+export function fn() {}`,
+      'mixed.ts'
+    )
+    expect(r.exports.sort()).toEqual(['E', 'I', 'REAL', 'T', 'fn'])
+  })
+
+  it('不会因为合并而产生重复项', () => {
+    const r = extract(`export const a = 1\nexport { a as b }`, 'dup.ts')
+    expect(new Set(r.exports).size).toBe(r.exports.length)
+  })
+
+  it('注释里的 export type 不算数', () => {
+    const r = extract(`// export type Ghost = 1\nexport const real = 1`, 'c.ts')
+    expect(r.exports).not.toContain('Ghost')
+  })
+})
