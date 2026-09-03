@@ -29,7 +29,8 @@ Code Atlas 一次性回答这几个问题：
 
 - **文件级（L1）+ 符号级（L2）** — 不只是「A 依赖 B」，而是「A 用了 B 导出的 `format`」
 - **影响范围分层** — 1 跳 / 2 跳 / 3 跳 / 全部，只高亮真正的传播路径
-- **零网络请求** — 打开 DevTools 的 Network 面板可自证；分析期间一个请求都没有
+- **零出站通道** — 不是「我们保证不发」，是应用代码里**根本不存在**发送数据的 API。
+  `tests/no-network.test.ts` 把这条做成了 CI 常驻断言，clone 下来 `npm test` 自己验
 - **无需安装** — 不用 CLI，不用装插件，打开网页选个目录就行
 - **多种语言/框架** — TS / JS / JSX / TSX / Vue / Svelte / Astro，含 monorepo 多份 tsconfig
 
@@ -58,10 +59,20 @@ npm run dev          # http://localhost:5173
 ```
 
 ```bash
-npm test             # 134 个用例，含一个分析本仓库源码的端到端用例
+npm test             # 149 个用例
 npm run typecheck
 npm run verify -- /path/to/repo   # Node 侧跑同一份解析器，输出上面那张表
 ```
+
+测试里有两个不太常见的：
+
+- `tests/demo.test.ts` — 全套里唯一喂**真实代码**的用例，拿本仓库自己的源码
+  一路走完 scan → extract → resolve → graph，断言命中率 100%。
+  它同时是内置示例的护栏（示例平时不执行，改坏了没人知道，
+  而它是部署后大多数人唯一会看到的路径）
+- `tests/no-network.test.ts` — 把「代码不出网」变成机器可验证的断言。
+  一张 DevTools 截图只能证明「拍照那一刻没有请求」，看图的人也没法确认当时做了什么操作；
+  这个用例证明的是**没有任何出站通道**
 
 需要 Chrome / Edge（[File System Access API](https://developer.mozilla.org/en-US/docs/Web/API/File_System_Access_API)）才能打开本地目录。
 其它浏览器可以看内置示例。
