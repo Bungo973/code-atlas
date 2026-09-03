@@ -13,7 +13,7 @@ import { hitRate, type AnalyzeResult } from '../core/analyze'
 import type { computeMetrics } from '../core/graph'
 import { groupByFile, type findSuspectedDeadSymbols } from '../core/symbols'
 
-type SectionId = 'hubs' | 'entries' | 'cycles' | 'dead' | 'islands' | 'report'
+export type SectionId = 'hubs' | 'entries' | 'cycles' | 'dead' | 'islands' | 'report'
 
 export function NotesDrawer({
   metrics,
@@ -22,6 +22,7 @@ export function NotesDrawer({
   scan,
   concurrency,
   onConcurrencyChange,
+  initialSection,
   onSelect,
   onClose,
 }: {
@@ -31,10 +32,12 @@ export function NotesDrawer({
   scan: BrowserScan
   concurrency: number
   onConcurrencyChange: (n: number) => void
+  /** 从详情栏的摘要点进来时，直接落到对应小节 */
+  initialSection: SectionId
   onSelect: (id: string) => void
   onClose: () => void
 }) {
-  const [section, setSection] = useState<SectionId>('hubs')
+  const [section, setSection] = useState<SectionId>(initialSection)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

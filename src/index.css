@@ -1139,3 +1139,37 @@ select {
   line-height: 1;
   padding: 0 6px;
 }
+
+/*
+ * 详情栏里的仓库摘要项：没选中文件时占据这一行。
+ * 长得像文本、行为是按钮——它就是分析面板对应小节的入口，
+ * 所以不该做成显眼的按钮把整行搞乱，但必须能看出可点。
+ */
+.detail-summary {
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  padding: 4px 8px;
+  border-radius: var(--r-row);
+  cursor: pointer;
+  flex: none;
+}
+
+.detail-summary b {
+  color: var(--ink-2);
+  font-weight: 500;
+  font-size: 13px;
+  margin-right: 3px;
+}
+
+.detail-summary:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink-2);
+}
+
+.detail-summary:hover b {
+  color: var(--ink);
+}

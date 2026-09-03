@@ -13,7 +13,7 @@ import { analyze, type AnalyzeResult } from './core/analyze'
 import { buildGraph, computeMetrics, impactOf, topLevelDir } from './core/graph'
 import { applyFilter, EMPTY_FILTER, facetsOf, type FileFilter } from './core/search'
 import { findSuspectedDeadSymbols, usageOf } from './core/symbols'
-import { DetailRail } from './ui/DetailRail'
+import { DetailRail, type NotesSection } from './ui/DetailRail'
 import { GraphCanvas } from './ui/GraphCanvas'
 import { NotesDrawer } from './ui/NotesDrawer'
 import { ProjectSidebar } from './ui/ProjectSidebar'
@@ -30,6 +30,8 @@ export function App() {
   const [result, setResult] = useState<AnalyzeResult | null>(null)
   const [concurrency, setConcurrency] = useState(32)
   const [notesOpen, setNotesOpen] = useState(false)
+  /** 分析面板打开时先落到哪一节。从详情栏的摘要点进来时会指定 */
+  const [notesSection, setNotesSection] = useState<NotesSection>('hubs')
   /** 疑似漏配别名的告警是否已被关掉。换仓库时重置——新仓库的情况是新的 */
   const [aliasWarnDismissed, setAliasWarnDismissed] = useState(false)
   /** 侧栏、画布、分析面板共享的选中文件——双向联动的单一数据源 */
@@ -296,8 +298,14 @@ export function App() {
             selected={ready ? selected : null}
             impact={ready ? impact : null}
             usage={selectedUsage}
+            metrics={ready ? graphBundle.metrics : null}
+            deadCount={deadCode?.suspects.length ?? 0}
             onClear={() => setSelected(null)}
-            onOpenNotes={() => ready && setNotesOpen(true)}
+            onOpenNotes={(section) => {
+              if (!ready) return
+              setNotesSection(section)
+              setNotesOpen(true)
+            }}
           />
         </div>
       </div>
@@ -310,6 +318,7 @@ export function App() {
           scan={scan}
           concurrency={concurrency}
           onConcurrencyChange={setConcurrency}
+          initialSection={notesSection}
           onSelect={setSelected}
           onClose={() => setNotesOpen(false)}
         />
