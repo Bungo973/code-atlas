@@ -14,6 +14,7 @@ import type Graph from 'graphology'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d'
 import type { GraphMetrics, Impact } from '../core/graph'
+import { aggregate } from '../core/aggregate'
 import { DEPTH_UNLIMITED, topLevelDir } from '../core/graph'
 import { isMatch, type MatchSet } from '../core/search'
 import type { FileNode } from '../core/types'
@@ -38,14 +39,81 @@ type CanvasNode = {
   out: number
   loc: number
   inCycle: boolean
+  /** 聚合模式下这个节点代表一个目录，不是一个文件 */
+  isGroup: boolean
+  /** 组内文件数（聚合模式）。文件节点恒为 1 */
+  files: number
+  /** 组内部的依赖条数（聚合模式）。目录内部 300 条和 3 条是完全不同的东西 */
+  internal: number
   x?: number
   y?: number
 }
 
-type CanvasLink = { source: string | CanvasNode; target: string | CanvasNode }
+type CanvasLink = {
+  source: string | CanvasNode
+  target: string | CanvasNode
+  /** 聚合模式下：这条目录间依赖由多少条文件级依赖构成 */
+  weight: number
+}
 
 const LOCATOR_W = 156
 const LOCATOR_H = 108
+
+/**
+ * 聚合粒度。0 = 不聚合，看文件本身。
+ *
+ * 超过 200 个节点，力导向图就只剩「这仓库很大」一个信息了，
+ * 所以大仓库默认从目录级看起——先看 15 个，再钻进去。
+ */
+const GRAIN_OPTIONS: { value: number; label: string }[] = [
+  { value: 0, label: '文件' },
+  { value: 1, label: '1 层' },
+  { value: 2, label: '2 层' },
+]
+
+/** 超过这个规模，文件级视图不再有可读性，默认折叠到目录 */
+const GRAIN_AUTO_THRESHOLD = 200
+
+/**
+ * 没有拴在主体上的节点：不属于**最大弱连通分量**的那些。
+ *
+ * 判据不能是「有没有边」——两个互相连接、但不连到主体的点，
+ * 在布局上和一个孤立点是完全同一类东西。
+ * 也不能用 metrics 里的全仓库口径：连通性必须按**当前画面上的边**算，
+ * 隔离和聚合都会改变它。
+ */
+function detachedOf(
+  nodes: { id: string }[],
+  edges: { source: string; target: string }[]
+): Set<string> {
+  const adj = new Map<string, string[]>()
+  for (const n of nodes) adj.set(n.id, [])
+  for (const e of edges) {
+    adj.get(e.source)?.push(e.target)
+    adj.get(e.target)?.push(e.source)
+  }
+
+  const seen = new Set<string>()
+  let biggest: string[] = []
+  for (const n of nodes) {
+    if (seen.has(n.id)) continue
+    const comp: string[] = []
+    const queue = [n.id]
+    seen.add(n.id)
+    for (let i = 0; i < queue.length; i++) {
+      comp.push(queue[i])
+      for (const next of adj.get(queue[i]) ?? []) {
+        if (seen.has(next)) continue
+        seen.add(next)
+        queue.push(next)
+      }
+    }
+    if (comp.length > biggest.length) biggest = comp
+  }
+
+  const main = new Set(biggest)
+  return new Set(nodes.map((n) => n.id).filter((id) => !main.has(id)))
+}
 
 const DEPTH_OPTIONS: { value: number; label: string }[] = [
   { value: 1, label: '1 跳' },
@@ -130,6 +198,7 @@ export function GraphCanvas({
   depth,
   onDepthChange,
   matches,
+  onDrillDown,
   colorOf,
   legend,
 }: {
@@ -143,6 +212,8 @@ export function GraphCanvas({
   onDepthChange: (d: number) => void
   /** 搜索命中集合，与侧栏共用同一份判定（core/search.ts）。null = 没在筛选 */
   matches: MatchSet
+  /** 从聚合视图点进一个目录：由 App 改筛选条件，画布只负责发出意图 */
+  onDrillDown: (dir: string) => void
   colorOf: (id: string) => string
   legend: { label: string; color: string; count: number }[]
 }) {
@@ -183,6 +254,18 @@ export function GraphCanvas({
    * 668 个点的乱麻里。**要让子集变清楚，必须让它自己重新收敛。**
    */
   const [isolate, setIsolate] = useState(false)
+  /** 聚合粒度：0 = 文件级，1/2 = 折叠到第 N 层目录 */
+  const [grain, setGrain] = useState(0)
+
+  /**
+   * 大仓库默认从目录级看起。
+   *
+   * 和「循环占比过高就默认关掉红圈」是同一条纪律：**默认值要让第一眼是可读的**，
+   * 而不是把「这张图没法看」的成本转嫁给用户去找按钮。
+   */
+  useEffect(() => {
+    setGrain(nodes.length > GRAIN_AUTO_THRESHOLD ? 1 : 0)
+  }, [nodes])
 
   /**
    * 筛选清空时自动退出隔离。
@@ -232,6 +315,75 @@ export function GraphCanvas({
     let maxDirect = 1
     for (const n of present) maxDirect = Math.max(maxDirect, metrics.inDegree.get(n.id) ?? 0)
 
+    const fileEdges: { source: string; target: string }[] = []
+    graph.forEachDirectedEdge((_e, _a, source, target) => {
+      if (shown && !(shown.has(source) && shown.has(target))) return
+      fileEdges.push({ source, target })
+    })
+
+    /**
+     * 聚合模式：节点是目录，边是带权重的目录间依赖。
+     *
+     * 半径区间给得比文件级大得多（5–21px 对 2.5–11px）——目录节点只有十几个，
+     * 画大才读得出差异；文件级有几百上千个，画大就必然糊。
+     */
+    if (grain > 0) {
+      const agg = aggregate(
+        present.map((n) => n.id),
+        fileEdges,
+        grain
+      )
+
+      let maxFiles = 1
+      for (const g of agg.nodes) maxFiles = Math.max(maxFiles, g.files)
+
+      const groupNodes: CanvasNode[] = agg.nodes.map((g) => ({
+        id: g.id,
+        // 只显示最后一段：packages/components 在画面上叫 components 就够了
+        name: g.id.slice(g.id.lastIndexOf('/') + 1),
+        dir: topLevelDir(g.id),
+        color: colorOf(g.id),
+        r: 5 + 16 * Math.sqrt(g.files / maxFiles),
+        // 目录的入度/出度按**依赖条数**算，不是按目录个数——
+        // 「47 条依赖指向这里」比「3 个目录依赖这里」更能说明耦合强度
+        direct: 0,
+        out: 0,
+        loc: 0,
+        inCycle: false,
+        isGroup: true,
+        files: g.files,
+        internal: g.internal,
+      }))
+
+      const byId = new Map(groupNodes.map((n) => [n.id, n]))
+      for (const e of agg.edges) {
+        const t = byId.get(e.target)
+        const src = byId.get(e.source)
+        if (t) t.direct += e.weight
+        if (src) src.out += e.weight
+      }
+
+      groupNodes.sort((a, b) => b.files - a.files)
+
+      const linked = new Set<string>()
+      for (const e of agg.edges) {
+        linked.add(e.source)
+        linked.add(e.target)
+      }
+
+      return {
+        nodes: groupNodes,
+        links: agg.edges.map((e) => ({
+          source: e.source,
+          target: e.target,
+          weight: e.weight,
+        })) as CanvasLink[],
+        linked,
+        detached: detachedOf(groupNodes, agg.edges),
+        dense: false,
+      }
+    }
+
     const canvasNodes: CanvasNode[] = present.map((n) => {
       const direct = metrics.inDegree.get(n.id) ?? 0
       return {
@@ -244,6 +396,9 @@ export function GraphCanvas({
         out: graph.outDegree(n.id),
         loc: n.loc,
         inCycle: metrics.inCycle.has(n.id),
+        isGroup: false,
+        files: 1,
+        internal: 0,
       }
     })
 
@@ -262,43 +417,15 @@ export function GraphCanvas({
     graph.forEachDirectedEdge((_e, _a, source, target) => {
       // 隔离时只保留两端都在子集里的边——力导向图收到指向不存在节点的边会直接崩
       if (shown && !(shown.has(source) && shown.has(target))) return
-      links.push({ source, target })
+      links.push({ source, target, weight: 1 })
       linked.add(source)
       linked.add(target)
     })
-    /**
-     * 没有拴在主体上的节点：不属于**最大弱连通分量**的那些。
-     *
-     * 判据不能是「有没有边」——两个互相连接、但不连到主体的点，
-     * 在布局上和一个孤立点是完全同一类东西（上一版正是从这条缝里漏掉了它们）。
-     * 也不能用 metrics 里的全仓库口径：隔离视图下连通性是按画面上的边算的。
-     */
-    const adj = new Map<string, string[]>()
-    for (const n of canvasNodes) adj.set(n.id, [])
-    for (const l of links) {
-      adj.get(l.source as string)?.push(l.target as string)
-      adj.get(l.target as string)?.push(l.source as string)
-    }
 
-    const seen = new Set<string>()
-    let biggest: string[] = []
-    for (const n of canvasNodes) {
-      if (seen.has(n.id)) continue
-      const comp: string[] = []
-      const queue = [n.id]
-      seen.add(n.id)
-      for (let i = 0; i < queue.length; i++) {
-        comp.push(queue[i])
-        for (const next of adj.get(queue[i]) ?? []) {
-          if (seen.has(next)) continue
-          seen.add(next)
-          queue.push(next)
-        }
-      }
-      if (comp.length > biggest.length) biggest = comp
-    }
-    const main = new Set(biggest)
-    const detached = new Set(canvasNodes.map((n) => n.id).filter((id) => !main.has(id)))
+    const detached = detachedOf(
+      canvasNodes,
+      links as unknown as { source: string; target: string }[]
+    )
 
     return { nodes: canvasNodes, links, linked, detached, dense: canvasNodes.length > 220 }
   }, [graph, metrics, nodes, colorOf, isolate, matches])
@@ -592,12 +719,36 @@ export function GraphCanvas({
           linkDirectionalArrowLength={data.dense ? 0 : 2.5}
           linkDirectionalArrowRelPos={1}
           linkWidth={(l) => {
-            if (!impact) return 1
-            const s = (l as CanvasLink).source as CanvasNode
-            const t = (l as CanvasLink).target as CanvasNode
-            return isStep(s.id, t.id) ? 2 : 1
+            const link = l as CanvasLink
+            const s = link.source as CanvasNode
+            const t = link.target as CanvasNode
+            if (impact) return isStep(s.id, t.id) ? 2 : 1
+            /**
+             * 聚合模式下线宽编码依赖条数。
+             *
+             * 目录之间「有 3 条依赖」和「有 470 条依赖」在架构上是两回事，
+             * 画成同样粗细等于把最关键的信息扔了。取对数是因为权重跨度极大
+             * （element-plus 上从 1 到 900+），线性映射会让绝大多数边细到看不见。
+             */
+            if (link.weight > 1) return 0.6 + Math.log2(link.weight) * 0.9
+            return 1
           }}
-          onNodeClick={(n) => onSelect(n.id === selected ? null : n.id)}
+          /**
+           * 点目录节点 = **下钻**，不是选中。
+           *
+           * 「先看 15 个，再钻进去」——点进去才有意义，选中一个目录没有对应的详情。
+           * 一次动作完成三件事：切回文件级、把筛选设成这个目录、打开隔离。
+           * 少任何一步，用户都得再手动点两下才能看到目录内部。
+           */
+          onNodeClick={(n) => {
+            if (n.isGroup) {
+              setGrain(0)
+              setIsolate(true)
+              onDrillDown(n.id)
+              return
+            }
+            onSelect(n.id === selected ? null : n.id)
+          }}
           onNodeHover={(n) => {
             hoveredRef.current = Boolean(n)
             // 进入节点的瞬间用 ref 里的最新位置播种，否则第一帧会画在旧位置
@@ -673,6 +824,25 @@ export function GraphCanvas({
 
       {/* 面板自身的圆角边框就是图幅内框线，不再单独画一层 */}
       <div className="canvas-tools">
+        <div
+          className="segmented"
+          role="radiogroup"
+          aria-label="聚合粒度"
+          title="把文件折叠到第几层目录"
+        >
+          {GRAIN_OPTIONS.map((o) => (
+            <button
+              key={o.label}
+              role="radio"
+              aria-checked={grain === o.value}
+              className={grain === o.value ? 'is-on' : undefined}
+              onClick={() => setGrain(o.value)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+
         <div
           className="segmented"
           role="radiogroup"
@@ -795,16 +965,25 @@ function NodeChip({
  */
 function NodeDetails({ node, impact }: { node: CanvasNode; impact: Impact | null }) {
   const slash = node.id.lastIndexOf('/')
-  const dir = slash < 0 ? '' : node.id.slice(0, slash + 1)
+  // 目录节点显示完整路径；文件节点显示所在目录（文件名已经在上面一行了）
+  const dir = node.isGroup ? node.id : slash < 0 ? '' : node.id.slice(0, slash + 1)
 
   return (
     <div className="canvas-tooltip">
       <b>{node.name}</b>
       {dir && <i>{dir}</i>}
-      <span>
-        <b>{node.direct}</b> 个文件直接引用 · 引用了 <b>{node.out}</b> 个 · <b>{node.loc}</b> 行
-        {node.inCycle ? ' · 在循环中' : ''}
-      </span>
+      {node.isGroup ? (
+        <span>
+          <b>{node.files}</b> 个文件 · 内部 <b>{node.internal}</b> 条依赖 · 被外部引用{' '}
+          <b>{node.direct}</b> 次 · 向外引用 <b>{node.out}</b> 次
+        </span>
+      ) : (
+        <span>
+          <b>{node.direct}</b> 个文件直接引用 · 引用了 <b>{node.out}</b> 个 · <b>{node.loc}</b> 行
+          {node.inCycle ? ' · 在循环中' : ''}
+        </span>
+      )}
+      {node.isGroup && <em>点击展开这个目录</em>}
       {impact && <RelationToSelection node={node} impact={impact} />}
     </div>
   )

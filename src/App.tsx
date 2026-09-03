@@ -245,6 +245,8 @@ export function App() {
               depth={impactDepth}
               onDepthChange={setImpactDepth}
               matches={matches}
+              /* 聚合视图点一个目录：换成「只看这个目录」的筛选，画布自己切回文件级 */
+              onDrillDown={(dir) => setFilter({ ...EMPTY_FILTER, dirs: [dir] })}
               colorOf={graphBundle.colorOf}
               legend={graphBundle.legend}
             />

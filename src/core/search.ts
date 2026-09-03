@@ -33,6 +33,17 @@ export function activeFacetCount(f: FileFilter): number {
 }
 
 /**
+ * 目录条件按**路径前缀**匹配，不是只匹配顶层。
+ *
+ * 分面按钮给的是顶层目录（`src`、`packages`），但从聚合视图下钻时传进来的是
+ * `packages/components` 这样的多级路径。前缀匹配对两者都成立，
+ * 而只比顶层的写法会让下钻静默失效——筛不出东西，却不报错。
+ */
+function inAnyDir(id: string, dirs: string[]): boolean {
+  return dirs.some((d) => (d === "(root)" ? !id.includes("/") : id === d || id.startsWith(d + "/")))
+}
+
+/**
  * 命中的文件 id 集合。
  *
  * 返回 `null` 表示**没有生效的筛选条件**，和「筛选了但一个都没命中」的空集合
@@ -44,16 +55,16 @@ export function activeFacetCount(f: FileFilter): number {
  * 就变成「这两个目录里的 .tsx 文件」。这是分面筛选的通行约定——
  * 同类取并集是在放宽，跨类取交集是在收紧，两者方向相反才好用。
  */
+
 export function applyFilter(fileIds: string[], f: FileFilter): MatchSet {
   if (!isFilterActive(f)) return null
 
   const terms = f.query.toLowerCase().split(/\s+/).filter(Boolean)
-  const dirs = new Set(f.dirs)
   const exts = new Set(f.exts)
 
   const out = new Set<string>()
   for (const id of fileIds) {
-    if (dirs.size > 0 && !dirs.has(topLevelDir(id))) continue
+    if (f.dirs.length > 0 && !inAnyDir(id, f.dirs)) continue
     if (exts.size > 0 && !exts.has(extname(id))) continue
     if (terms.length > 0) {
       const haystack = id.toLowerCase()
