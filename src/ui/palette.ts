@@ -1,19 +1,24 @@
 /**
  * 可视化配色。
  *
- * 力导向图属于「all-pairs」形态——任意两个颜色都可能相邻，
- * 所以分类色**只能用前 3 个槽位**，第 4 个及以后折叠成 Other。
- * 这不是省事，是 8 个槽位在 all-pairs 下无法同时满足色觉分离下限。
- *
- * 已验证（深色表面 #1a1a19，--pairs all --mode dark）：
- *   亮度带 PASS · 彩度下限 PASS · 色觉分离 ΔE 9.4 PASS
- *   常视分离 ΔE 20.9 PASS · 对比度 ≥3:1 PASS
+ * 扩为 8 个目录槽位，减少不同目录折叠为灰色的情况，保留原有前三色。
+ * 色板针对深色画布选择；颜色只是辅助，目录身份仍由图例和文件路径说明。
+ * 不把更多颜色等同于所有色觉条件下都能区分；循环状态仍单独使用红色描边。
  */
 
 /** 分类槽位（深色步进）。顺序固定，永不循环使用 */
-export const SERIES = ['#3987e5', '#d95926', '#199e70'] as const
+export const SERIES = [
+  '#3987e5', // 蓝
+  '#d95926', // 橙
+  '#199e70', // 绿
+  '#a78bfa', // 紫
+  '#d6b75a', // 金
+  '#48b8c4', // 青
+  '#d685aa', // 粉
+  '#9caab8', // 蓝灰
+] as const
 
-/** 第 4 个及以后的目录统一折叠为此色 */
+/** 超出分类槽位的目录统一折叠为此色 */
 export const OTHER = '#898781'
 
 export const SURFACE = '#1a1a19'
@@ -36,14 +41,13 @@ export const STATUS = {
 export type DirColorMap = {
   /** 顶层目录 → 颜色 */
   color: (dir: string) => string
-  /** 图例条目，按节点数降序；最多 4 条（3 个具名 + Other） */
+  /** 图例条目，按节点数降序；最多 9 条（8 个具名 + Other） */
   legend: { label: string; color: string; count: number }[]
 }
 
 /**
- * 按节点数取前 3 个顶层目录着色，其余折叠为 Other。
- * 颜色跟随实体（目录名）而非排名——筛选导致目录消失时，
- * 存活目录的颜色不能被重新分配。
+ * 按全仓库文件数取前 8 个顶层目录着色，其余折叠为 Other。
+ * App 为每份分析结果分配一次映射；筛选和聚合复用映射，不重新排名换色。
  */
 export function buildDirColors(dirs: string[]): DirColorMap {
   const counts = new Map<string, number>()

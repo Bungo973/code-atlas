@@ -79,7 +79,7 @@ export function ProjectSidebar({
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => bodyRef.current,
-    estimateSize: () => 24,
+    estimateSize: () => 30,
     overscan: 12,
   })
 
@@ -102,14 +102,15 @@ export function ProjectSidebar({
     if (i >= 0) virtualizer.scrollToIndex(i, { align: 'center' })
   }, [selected, rows, virtualizer])
 
-  const matchCount = rows.filter((r) => !r.node.isDir).length
-
   return (
     <div className="panel sidebar">
+      <div className="sidebar-heading"><h2>工程文件</h2><span className="muted">目录索引</span></div>
       <div className="sidebar-search-box">
         <input
           className="sidebar-search"
-          placeholder="搜索文件…　空格分词"
+          placeholder="搜索文件或路径"
+          aria-label="搜索文件或路径"
+          aria-describedby="search-hint"
           value={filter.query}
           onChange={(e) => onFilterChange({ ...filter, query: e.target.value })}
           // Esc 清空是搜索框的通用约定，没有它只能一个字一个字退
@@ -130,10 +131,12 @@ export function ProjectSidebar({
           </button>
         )}
       </div>
+      <p className="sidebar-search-hint" id="search-hint">空格分隔关键词</p>
 
       <FilterBar filter={filter} onChange={onFilterChange} facets={facets} />
 
       <div className="sidebar-body" ref={bodyRef}>
+        {matches && rows.length === 0 && <p className="sidebar-empty">没有匹配的文件</p>}
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
           {virtualizer.getVirtualItems().map((v) => {
             const { node, expanded: isOpen } = rows[v.index]
@@ -203,9 +206,6 @@ export function ProjectSidebar({
         </div>
       </div>
 
-      <div className="sidebar-footer">
-        {matches ? `${matchCount} / ${fileIds.length} 个文件` : `${fileIds.length} 个文件`}
-      </div>
     </div>
   )
 }

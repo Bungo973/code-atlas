@@ -7,22 +7,25 @@
 
 ```
 ┌─ app-bar ─────────────────────────────────────────────────────┐
-│ Code Atlas   travel_map  76 个代码文件  153 条依赖   并发▾ [打开] │
+│ Code Atlas   travel_map           并发▾  [项目分析] [选择目录]  │
 ├───────────────────────────────────────────────────────────────┤
 │ banner（仅在有警告时出现）                                       │
 ├─ workspace ───────────────────────────────────────────────────┤
-│ ┌ sidebar ────────┐ ┌ canvas ───────────────────────────────┐ │
-│ │ sidebar-search  │ │ ┌ canvas-neatline ── canvas-tools ──┐ │ │
-│ │ ┌ sidebar-body ┐│ │ │ canvas-tooltip                    │ │ │
-│ │ │ sidebar-row  ││ │ │                                   │ │ │
-│ │ │ sidebar-row  ││ │ │        canvas-stage（力导向图）     │ │ │
-│ │ └──────────────┘│ │ │                                   │ │ │
-│ │ sidebar-footer  │ │ │ canvas-legend    canvas-locator   │ │ │
+│ ┌ sidebar ────────┐ ┌ graph-panel ──────────────────────────┐ │
+│ │ sidebar-search  │ │ ┌ detail-rail ──────────────────────┐ │ │
+│ │ sidebar-filters │ │ │ types.ts  29 受影响 6 导出   [分析] │ │ │
+│ │ ┌ sidebar-body ┐│ │ ├ canvas-tools ─────────────────────┤ │ │
+│ │ │ sidebar-row  ││ │ │ 显示粒度 关系方向 关系范围 显示选项  │ │ │
+│ │ │ sidebar-row  ││ │ ├ canvas-stage ─────────────────────┤ │ │
+│ │ └──────────────┘│ │ │      canvas-tooltip               │ │ │
+│ │                 │ │ │      力导向图 + 文件名标签          │ │ │
+│ │                 │ │ │ canvas-legend    canvas-locator   │ │ │
 │ └─────────────────┘ │ └───────────────────────────────────┘ │ │
 │                     └───────────────────────────────────────┘ │
-├─ detail-rail ─────────────────────────────────────────────────┤
-│ web/src/api/types.ts   29 受影响  6 导出  2 无人引用    [分析]  │
 └───────────────────────────────────────────────────────────────┘
+
+详情栏和设置条都在图幅内部：它们描述的是这张图，不是整个页面。
+没选中文件时，详情栏那一行是**仓库摘要**，每项直达分析面板对应小节。
 
                     点「分析」 → notes 从右侧滑出
                     ┌─ notes ──────────────────────┐
@@ -48,7 +51,10 @@
 | 工程目录侧栏 | **侧栏** | `ProjectSidebar` | `.sidebar` |
 | 图幅 | **画布** | `GraphCanvas` | `.canvas` |
 | 位置索引图 | **小地图** | （画布内） | `.canvas-locator` |
-| 选中项单行 | **详情栏** | `DetailRail` | `.detail-rail` |
+| 图幅外框 | **图谱面板** | —（App 内联） | `.graph-panel` |
+| 选中项单行 | **详情栏** | `DetailRail` | `.detail-rail`（图幅内） |
+| 画布设置条 | **设置条** | （画布内） | `.canvas-tools` → `.control-group` |
+| 画布文件名 | **文件名标签** | `nodeLabels.ts` | （canvas 绘制，无 DOM 节点） |
 | 分析抽屉 | **分析面板** | `NotesDrawer` | `.notes` |
 
 ## 视觉概念：一张地图图幅
@@ -60,6 +66,7 @@
 | 图幅内框线（neatline） | `.canvas-neatline` — 把画布和页面分开 |
 | 位置索引图（locator inset） | `.canvas-locator` — 全图缩略 + 视口矩形，点击跳转 |
 | 图例（legend） | `.canvas-legend` — 目录配色 + 循环依赖 |
+| 地名注记（label） | 画布文件名 — 只在聚焦时出现，打不赢碰撞就不画 |
 | 索引（index） | `.sidebar` — 按目录组织的文件清单 |
 | 图幅注记 | `.notes` — 收进抽屉的全部分析表格 |
 

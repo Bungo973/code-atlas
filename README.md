@@ -137,7 +137,7 @@ ADR-004 是对 ADR-003 措辞的修正：原话把「不划算」写成了「做
 第二条是命门——缺了它误报率从 7% 涨到 35%。
 界面上永远写「**疑似**死代码」，两个字不可省略：可能被动态引用，也可能本身就是公开 API。
 
-## 四个只有肉眼能发现的问题
+## 六个只有肉眼能发现的问题
 
 单元测试和聚合指标都没抓到它们，全是靠盯着真实仓库的产物才发现的。这部分是我认为最值得看的：
 
@@ -165,8 +165,27 @@ excalidraw 有一个 346 个节点的强连通分量，于是几乎每个文件�
 枢纽榜甚至**按它排序**——前几十行全是并列 509，等于随机取 40 个。
 修复后定下三条硬规矩：饱和指标不做排序键、不做视觉编码、不单独出现。
 
+**⑤ monorepo 的内部包全被判成外部包**（[ADR-025](docs/DECISIONS.md)）
+element-plus：2209 个文件里有 1957 处 `@element-plus/*` 引用，全部被丢进 external。
+图只剩 2528 条边，42% 的文件成了孤岛——**而命中率显示 98.7% ✅**。
+和①是同一个盲区：被判成外部包的 import 不进分母。这已经是第五次。
+修复：收集仓库里全部 `package.json` 按 `name` 建映射；入口顺序是 `exports.source` → `module` → `main`，
+`main` 排在后面是因为它通常指向 `dist/`，而**刚 clone 的仓库没有 dist**。
+同一次排查里还掉出来一个：excalidraw 的 `from "../..//shortcut"`（多打一个斜杠）让正则版的
+注释剥离把收尾引号一起删掉，引号配对错位，**下一条 import 也被吞掉**。
+
+**⑥ `useMemo` 漏了一个依赖，聚合功能整个静默失效**（[ADR-027](docs/DECISIONS.md)）
+新做的目录聚合，控件点下去画面纹丝不动，也不报错——`grain` 没进依赖数组。
+`tsc` 干净、205 个测试全绿、构建成功，**三道关卡一起沉默**，因为这个项目当时 UI 层零测试。
+是用户点了一下控件才发现的。现在 `nodeLabels.ts` / `Presentation.tsx` / `palette.ts`
+这些能抽成纯函数的部分补了 32 个测试。
+
 > 教训写在 ADR-020 里：**推翻一个指标的时候，要把它的所有使用点一起 grep 一遍。**
 > 我写完这句话之后自己又漏了两处，于是有了 ADR-021。
+>
+> 但①⑤说明那句话不够——问题不在使用点，在**分母的定义**本身：
+> 「命中率」把自己解释不了的东西排除在分母外，所以它永远是绿的。
+> 一个只会报喜的指标比没有指标更糟，因为它会让人停止去看产物。
 
 ## 项目结构
 
@@ -176,8 +195,11 @@ src/
 │   ├── extractor.ts     import 提取（lexer + 正则兜底）
 │   ├── resolver.ts    ★ specifier → 硬盘上的真实文件
 │   ├── analyze.ts       流水线编排
-│   ├── graph.ts         图指标：入度 / 循环 / 入口 / 影响范围
+│   ├── graph.ts         图指标：入度 / 循环 / 入口 / 影响范围（双向）
 │   ├── symbols.ts       符号级引用与疑似死代码
+│   ├── workspace.ts     monorepo 内部包映射
+│   ├── aggregate.ts     目录级聚合（把文件折叠成目录节点）
+│   ├── search.ts        分面筛选：同类「或」，跨类「与」
 │   └── tree.ts          目录树构建与展平
 ├── adapters/
 │   ├── browser.ts       File System Access API
@@ -186,7 +208,9 @@ src/
     ├── ProjectSidebar.tsx   侧栏
     ├── GraphCanvas.tsx      画布（含小地图）
     ├── DetailRail.tsx       详情栏
-    └── NotesDrawer.tsx      分析面板
+    ├── NotesDrawer.tsx      分析面板
+    ├── nodeLabels.ts        画布文件名：避让布局 + 绘制（纯函数，可测）
+    └── Presentation.tsx     共用展示件与统一口径
 ```
 
 `resolver.ts` 是核心：处理相对路径、tsconfig 别名（含 monorepo 多作用域）、
@@ -198,9 +222,10 @@ index 文件、扩展名补全、ESM+TS 的 `.js`→`.ts` 约定、纯类型 `.d
 | 文档 | 内容 |
 |---|---|
 | [`CONTEXT.md`](CONTEXT.md) | 词汇表。每个术语带 `_Avoid_` 列表，统一说法 |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | 22 条决策记录，含被推翻的决定 |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | 28 条决策记录，含 3 条被后来推翻的决定 |
 | [`docs/UI-VOCABULARY.md`](docs/UI-VOCABULARY.md) | 界面区域命名、圆角分级、两条视觉硬约束 |
-| [`docs/PLAN.md`](docs/PLAN.md) | 计划、验收标准、计划与实际的对照 |
+| [`docs/PLAN.md`](docs/PLAN.md) | 计划、验收标准、计划与实际的对照、**未做的事及理由** |
+| [`docs/INTERACTION-OPTIMIZATION.md`](docs/INTERACTION-OPTIMIZATION.md) | 交互评审原文（16 项）。采纳 6 项，取舍见 ADR-026 |
 
 ## 技术栈
 

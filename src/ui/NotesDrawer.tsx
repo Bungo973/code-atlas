@@ -12,6 +12,7 @@ import type { BrowserScan } from '../adapters/browser'
 import { hitRate, type AnalyzeResult } from '../core/analyze'
 import type { computeMetrics } from '../core/graph'
 import { groupByFile, type findSuspectedDeadSymbols } from '../core/symbols'
+import { dependencyRankCount, FilePath, Metric, SectionHeading } from './Presentation'
 
 export type SectionId = 'hubs' | 'entries' | 'cycles' | 'dead' | 'islands' | 'report'
 
@@ -53,53 +54,52 @@ export function NotesDrawer({
   }
 
   // 真正被别人依赖过的文件数——排行表里也正是筛的这一批
-  let hubCount = 0
-  for (const n of metrics.inDegree.values()) if (n > 0) hubCount++
+  const hubCount = dependencyRankCount(metrics.inDegree)
 
-  const nav: { id: SectionId; label: string; count?: number; tone?: string }[] = [
+  const nav: { id: SectionId; label: string; count?: number }[] = [
     // inDegree 每个节点都有条目，它的 size 是**全部文件数**，不是枢纽数。
     // 原来标成「枢纽文件 2209」，等于宣称这个仓库每个文件都是枢纽（I-06）。
     { id: 'hubs', label: '依赖排行', count: hubCount },
-    { id: 'entries', label: '入口点', count: metrics.entryPoints.length },
+    { id: 'entries', label: '入口文件', count: metrics.entryPoints.length },
     {
       id: 'cycles',
       label: '循环依赖',
       // 单位是**组**，不是文件。画布图例数的是成员文件数，两处必须各自写清单位
       count: metrics.cycles.length,
-      tone: metrics.cycles.length ? 'bad' : undefined,
     },
     {
       id: 'dead',
       label: '疑似死代码',
       count: deadCode?.suspects.length,
-      tone: deadCode?.suspects.length ? 'warn' : undefined,
     },
-    { id: 'islands', label: '孤岛', count: metrics.islands.length },
+    { id: 'islands', label: '孤岛文件', count: metrics.islands.length },
     { id: 'report', label: '解析报告' },
   ]
 
   return (
     <>
       <div className="notes-scrim" onClick={onClose} />
-      <aside className="notes" role="dialog" aria-label="分析">
+      <aside className="notes" role="dialog" aria-label="项目分析" aria-modal="true">
         <div className="notes-head">
-          <h2>分析</h2>
-          <span className="muted mono">{scan.rootName}</span>
-          <button className="quiet" style={{ marginLeft: 'auto' }} onClick={onClose}>
+          <h2>项目分析</h2>
+          <span className="muted mono" title={scan.rootName}>{scan.rootName}</span>
+          <button className="quiet" onClick={onClose}>
             关闭
           </button>
         </div>
 
         <div className="notes-main">
-          <nav className="notes-nav">
+          <nav className="notes-nav" aria-label="分析分类">
             {nav.map((n) => (
               <button
                 key={n.id}
-                aria-selected={section === n.id}
+                aria-current={section === n.id ? 'page' : undefined}
                 onClick={() => setSection(n.id)}
               >
                 {n.label}
-                {n.count !== undefined && <em className={n.tone}>{n.count}</em>}
+                {n.count !== undefined && (
+                  <em>{n.count}{n.id === 'cycles' ? ' 组' : n.id === 'dead' ? ' 符号' : ''}</em>
+                )}
               </button>
             ))}
           </nav>
@@ -142,20 +142,23 @@ function Hubs({ metrics, onJump }: { metrics: Metrics; onJump: (id: string) => v
 
   return (
     <div className="card">
-      <h3>被依赖最多的文件</h3>
+      <SectionHeading title="依赖排行" description="按直接依赖它的文件数量排序，帮助识别项目中的公共依赖。">
+        <Metric value={dependencyRankCount(metrics.inDegree)} label="被依赖的文件" unit="文件" />
+        <Metric value={rows.length} label="当前展示（最多 40）" unit="文件" />
+      </SectionHeading>
       <table className="data-table">
         <thead>
           <tr>
             <th>文件</th>
-            <th className="num">直接</th>
-            <th className="num">含间接</th>
+            <th className="num">直接依赖它</th>
+            <th className="num">含间接依赖</th>
           </tr>
         </thead>
         <tbody>
           {rows.map(([id, n]) => (
             <tr key={id} className="clickable" onClick={() => onJump(id)}>
               <td>
-                <code>{id}</code>
+                <FilePath path={id} />
               </td>
               <td className="num">{n}</td>
               <td className="num muted">{metrics.transitiveInDegree.get(id) ?? 0}</td>
@@ -163,6 +166,7 @@ function Hubs({ metrics, onJump }: { metrics: Metrics; onJump: (id: string) => v
           ))}
         </tbody>
       </table>
+      {rows.length === 0 && <p className="empty-message">当前仓库中没有被其他文件依赖的文件。</p>}
     </div>
   )
 }
@@ -170,58 +174,43 @@ function Hubs({ metrics, onJump }: { metrics: Metrics; onJump: (id: string) => v
 function Entries({ metrics, onJump }: { metrics: Metrics; onJump: (id: string) => void }) {
   return (
     <div className="card">
-      <h3>没有任何文件依赖它们，适合作为阅读起点</h3>
+      <SectionHeading title="入口文件" description="没有其他仓库内文件依赖它们，可以作为阅读项目的起点。">
+        <Metric value={metrics.entryPoints.length} label="入口文件" unit="文件" />
+      </SectionHeading>
       <table className="data-table">
         <tbody>
           {metrics.entryPoints.map((id) => (
             <tr key={id} className="clickable" onClick={() => onJump(id)}>
               <td>
-                <code>{id}</code>
+                <FilePath path={id} />
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {metrics.entryPoints.length === 0 && <p className="empty-message">当前规则下没有识别到入口文件。</p>}
     </div>
   )
 }
 
 function Cycles({ metrics, onJump }: { metrics: Metrics; onJump: (id: string) => void }) {
-  if (metrics.cycles.length === 0) {
-    return (
-      <div className="card">
-        <h3>没有检测到循环依赖</h3>
-      </div>
-    )
-  }
   return (
     <div className="card">
-      <h3>
-        互相依赖、无法单独抽离的文件组 —— {metrics.cycles.length} 组，涉及{' '}
-        {metrics.inCycle.size} 个文件
-      </h3>
-      <table className="data-table">
-        <tbody>
-          {/*
-            成员逐个可点。原来整行绑 onJump(cycle[0])，点第 5 个成员跳到第 1 个——
-            「点谁就到谁」是最基本的约定，违反它会让用户不再信任任何跳转（I-04）。
-          */}
-          {metrics.cycles.map((cycle, i) => (
-            <tr key={i}>
-              <td>
-                {cycle.map((f) => (
-                  <div key={f}>
-                    <button className="link-row" onClick={() => onJump(f)}>
-                      <code>{f}</code>
-                    </button>
-                  </div>
-                ))}
-              </td>
-              <td className="num">{cycle.length}</td>
-            </tr>
+      <SectionHeading title="循环依赖" description="组内文件通过直接或间接依赖形成循环。点击任一成员可在图谱中定位。">
+        <Metric value={metrics.cycles.length} label="循环依赖" unit="组" />
+        <Metric value={metrics.inCycle.size} label="涉及文件" unit="文件" />
+      </SectionHeading>
+      {metrics.cycles.length === 0 && <p className="empty-message">没有检测到循环依赖。</p>}
+      {metrics.cycles.map((cycle, i) => (
+        <section className="cycle-group" key={i}>
+          <div className="cycle-heading"><h4>循环组 {i + 1}</h4><span>{cycle.length} 个文件</span></div>
+          {cycle.map((f) => (
+            <button key={f} className="link-row" onClick={() => onJump(f)}>
+              <FilePath path={f} />
+            </button>
           ))}
-        </tbody>
-      </table>
+        </section>
+      ))}
     </div>
   )
 }
@@ -237,20 +226,26 @@ function DeadCode({
     return (
       <div className="card">
         {/* 零结果也可能来自豁免，不能宣称每个导出都有显式引用 */}
-        <h3>未发现符合当前规则的疑似死代码</h3>
+        <SectionHeading title="疑似死代码" description="静态分析结果仅供排查，不代表可以直接删除。">
+          <Metric value={0} label="疑似未引用导出" unit="符号" />
+        </SectionHeading>
+        <p className="empty-message">未发现符合当前规则的疑似死代码。</p>
       </div>
     )
   }
   return (
     <div className="card">
-      <h3>仓库内找不到引用的导出符号</h3>
+      <SectionHeading title="疑似死代码" description="当前规则下未发现仓库内引用的导出符号。请先确认动态引用与对外 API，再决定是否清理。">
+        <Metric value={deadCode.suspects.length} label="疑似未引用导出" unit="符号" />
+      </SectionHeading>
       <table className="data-table">
+        <thead><tr><th>文件与导出符号</th><th className="num">符号数</th></tr></thead>
         <tbody>
           {groupByFile(deadCode.suspects).map((g) => (
             <tr key={g.file} className="clickable" onClick={() => onJump(g.file)}>
               <td>
-                <code>{g.file}</code>
-                <div className="muted mono" style={{ marginTop: 2 }}>
+                <FilePath path={g.file} />
+                <div className="symbol-names">
                   {g.names.join('  ')}
                 </div>
               </td>
@@ -271,18 +266,21 @@ function DeadCode({
 function Islands({ metrics, onJump }: { metrics: Metrics; onJump: (id: string) => void }) {
   return (
     <div className="card">
-      <h3>既不依赖别人也不被依赖</h3>
+      <SectionHeading title="孤岛文件" description="没有仓库内的导入或被导入关系；这不代表文件无用。">
+        <Metric value={metrics.islands.length} label="孤岛文件" unit="文件" />
+      </SectionHeading>
       <table className="data-table">
         <tbody>
           {metrics.islands.map((id) => (
             <tr key={id} className="clickable" onClick={() => onJump(id)}>
               <td>
-                <code>{id}</code>
+                <FilePath path={id} />
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {metrics.islands.length === 0 && <p className="empty-message">当前依赖图中没有孤岛文件。</p>}
     </div>
   )
 }
@@ -309,9 +307,11 @@ function Report({
   return (
     <>
       <div className="card">
+        <SectionHeading title="解析报告" description="查看本次本地分析的覆盖情况、耗时与解析诊断。" />
+        <h3>概览</h3>
         <div className="figures">
           <Figure label="代码文件" value={result.nodes.length} />
-          <Figure label="依赖边" value={result.edges.length} />
+          <Figure label="文件依赖" value={result.edges.length} />
           <Figure label="导出符号" value={result.symbols.length} />
           <Figure label="符号引用" value={result.symbolEdges.length} />
           <Figure
@@ -319,7 +319,7 @@ function Report({
             value={`${rate.toFixed(1)}%`}
             tone={rate >= 90 ? 'ok' : rate >= 75 ? 'warn' : 'bad'}
           />
-          <Figure label="总耗时" value={`${wall.toFixed(0)}ms`} />
+          <Figure label="总耗时" value={`${wall.toFixed(0)} ms`} />
         </div>
         <p className="hint">
           命中率 = {stats.resolved} / {internal}。构建产物、框架虚拟模块、超出所选目录的引用
@@ -328,7 +328,7 @@ function Report({
       </div>
 
       <div className="card">
-        <h3>耗时分解</h3>
+        <h3>分析耗时</h3>
         <table className="data-table">
           <tbody>
             <Row label="目录遍历" value={`${scan.scanMs.toFixed(0)} ms`} />
@@ -361,7 +361,7 @@ function Report({
       </div>
 
       <div className="card">
-        <h3>import 分类</h3>
+        <h3>依赖解析</h3>
         <table className="data-table">
           <tbody>
             <Row label="总计" value={stats.total} />
@@ -381,8 +381,9 @@ function Report({
         </table>
       </div>
 
-      <div className="card">
-        <h3>提取器</h3>
+      <section className="card">
+        <h3>诊断信息</h3>
+        <h4>提取器与别名配置</h4>
         <table className="data-table">
           <tbody>
             <Row label="es-module-lexer 直接解析" value={stats.lexerOk} />
@@ -390,11 +391,10 @@ function Report({
             <Row label="tsconfig 别名" value={`${result.aliasCount} 条 / ${result.aliasScopes.length} 份配置`} />
           </tbody>
         </table>
-      </div>
 
       {realFailures.length > 0 && (
-        <div className="card">
-          <h3>真实失败样本</h3>
+        <div className="report-block">
+          <h4>真实失败样本</h4>
           {/*
             两列都是可能很长的路径和 specifier，必须能折行。
             原来第二列挂的是 .num（它带 white-space: nowrap，本来是给数字用的），
@@ -429,8 +429,8 @@ function Report({
       )}
 
       {result.aliasLikeExternals.length > 0 && (
-        <div className="card">
-          <h3>疑似漏配别名</h3>
+        <div className="report-block">
+          <h4>疑似漏配别名</h4>
           <p className="hint">
             这些 specifier 长得像路径别名（<code>@/</code> <code>~/</code> <code>#</code> 开头），
             但没匹配上任何 tsconfig 的 <code>paths</code>，所以被当成了外部包——
@@ -470,17 +470,13 @@ function Report({
           </p>
         </div>
       )}
+      </section>
     </>
   )
 }
 
 function Figure({ label, value, tone }: { label: string; value: string | number; tone?: string }) {
-  return (
-    <div className="figure">
-      <b className={tone}>{value}</b>
-      <span>{label}</span>
-    </div>
-  )
+  return <Metric label={label} value={value} tone={tone} />
 }
 
 function Row({ label, value, tone }: { label: string; value: string | number; tone?: string }) {

@@ -48,8 +48,8 @@ export function App() {
    */
   const [impactDepth, setImpactDepth] = useState<number>(2)
   /**
-   * 关系方向。默认「谁依赖它」——最常见的问题是「改这个会波及谁」。
-   * 但从入口点出发时那个答案恒为 0，所以必须能切到「它依赖谁」（I-09）。
+   * 关系方向。默认「被依赖」——最常见的问题是「改这个会波及谁」。
+   * 但从入口点出发时那个答案恒为 0，所以必须能切到「依赖」（I-09）。
    */
   const [direction, setDirection] = useState<Direction>('dependents')
   /** 筛选条件提到这里：侧栏和画布必须用同一份命中判定，否则两边数字会对不上 */
@@ -57,7 +57,7 @@ export function App() {
 
   const sidebar = useResizableWidth({
     storageKey: 'code-atlas.sidebar-width',
-    initial: 268,
+    initial: 280,
     min: 190,
     max: 560,
   })
@@ -177,17 +177,10 @@ export function App() {
 
         {scan && (
           <div className="app-bar-project">
-            <b className="mono">{scan.rootName}</b>
+            <b className="mono project-name" title={scan.rootName}>
+              {scan.rootName}
+            </b>
             {isDemo && <span className="tag">示例</span>}
-            {/* 数字比标签亮一档：这是数据工具，数字才是内容 */}
-            <span className="metric">
-              <b>{scan.files.length}</b> 个代码文件
-            </span>
-            {ready && (
-              <span className="metric">
-                <b>{result.edges.length}</b> 条依赖
-              </span>
-            )}
           </div>
         )}
 
@@ -202,8 +195,16 @@ export function App() {
           「分析 → 解析报告」，和它影响的耗时数字放在一起。
         */}
         <div className="app-bar-right">
+          {ready && (
+            <button onClick={() => {
+              setNotesSection('hubs')
+              setNotesOpen(true)
+            }}>
+              项目分析
+            </button>
+          )}
           <button className="primary" onClick={run} disabled={busy || !isSupported()}>
-            {busy ? '分析中' : scan ? '换一个目录' : '打开目录'}
+            {busy ? '分析中' : scan ? '切换目录' : '选择目录'}
           </button>
         </div>
       </header>
@@ -246,8 +247,8 @@ export function App() {
           )}
         </div>
 
-        <div className="workspace">
-          {ready ? (
+        <main className={`workspace${ready ? '' : ' workspace--empty'}`}>
+          {ready && (
             <ProjectSidebar
               fileIds={fileIds}
               selected={selected}
@@ -260,70 +261,69 @@ export function App() {
               facets={facets}
               matches={matches}
             />
-          ) : (
-            <div className="panel sidebar" />
           )}
 
-          <div
-            {...sidebar.handleProps}
-            className={`resize-handle${sidebar.dragging ? ' resize-handle--dragging' : ''}`}
-          />
+          {ready && (
+            <div
+              {...sidebar.handleProps}
+              className={`resize-handle${sidebar.dragging ? ' resize-handle--dragging' : ''}`}
+            />
+          )}
 
           {ready ? (
-            <GraphCanvas
-              graph={graphBundle.graph}
-              metrics={graphBundle.metrics}
-              nodes={result.nodes}
-              selected={selected}
-              onSelect={setSelected}
-              impact={impact}
-              depth={impactDepth}
-              onDepthChange={setImpactDepth}
-              direction={direction}
-              onDirectionChange={setDirection}
-              matches={matches}
-              /* 聚合视图点一个目录：换成「只看这个目录」的筛选，画布自己切回文件级 */
-              onDrillDown={(dir) => setFilter({ ...EMPTY_FILTER, dirs: [dir] })}
-              colorOf={graphBundle.colorOf}
-              legend={graphBundle.legend}
-            />
+            <section className="panel graph-panel" aria-label="依赖图谱">
+              <DetailRail
+                selected={selected}
+                impact={impact}
+                usage={selectedUsage}
+                metrics={graphBundle.metrics}
+                deadCount={deadCode?.suspects.length ?? 0}
+                onClear={() => setSelected(null)}
+                onOpenNotes={(section) => {
+                  setNotesSection(section)
+                  setNotesOpen(true)
+                }}
+              />
+              <GraphCanvas
+                graph={graphBundle.graph}
+                metrics={graphBundle.metrics}
+                nodes={result.nodes}
+                selected={selected}
+                onSelect={setSelected}
+                impact={impact}
+                depth={impactDepth}
+                onDepthChange={setImpactDepth}
+                direction={direction}
+                onDirectionChange={setDirection}
+                matches={matches}
+                /* 聚合视图点一个目录：换成「只看这个目录」的筛选，画布自己切回文件级 */
+                onDrillDown={(dir) => setFilter({ ...EMPTY_FILTER, dirs: [dir] })}
+                colorOf={graphBundle.colorOf}
+                legend={graphBundle.legend}
+              />
+            </section>
           ) : (
-            <div className="panel canvas">
+            <div className="welcome">
               <div className="canvas-empty">
-                <p>选择一个代码仓库，看清它是怎么连起来的</p>
+                <span className="welcome-eyebrow">CODE ATLAS / 本地代码分析</span>
+                <h2>看清项目结构与文件依赖</h2>
+                <p>选择本地代码仓库，浏览文件关系与分析结果。</p>
                 <div className="canvas-empty-actions">
                   <button className="primary" onClick={run} disabled={busy || !isSupported()}>
-                    {busy ? '分析中' : '打开目录'}
+                    {busy ? '分析中' : '选择目录'}
                   </button>
                   <button onClick={runDemo} disabled={busy}>
-                    看示例
+                    查看演示
                   </button>
                 </div>
                 <p className="hint">
-                  示例是 Code Atlas 分析它自己的源码（{demoFileCount()} 个文件），
-                  走的是同一条流水线，不是预先算好的数据。
+                  演示以 Code Atlas 自身源码为例，包含 {demoFileCount()} 个项目文件。
                 </p>
                 <p className="hint">全程在本机完成，代码不会离开浏览器</p>
               </div>
             </div>
           )}
-        </div>
-
-        <div className="panel board-rail">
-          <DetailRail
-            selected={ready ? selected : null}
-            impact={ready ? impact : null}
-            usage={selectedUsage}
-            metrics={ready ? graphBundle.metrics : null}
-            deadCount={deadCode?.suspects.length ?? 0}
-            onClear={() => setSelected(null)}
-            onOpenNotes={(section) => {
-              if (!ready) return
-              setNotesSection(section)
-              setNotesOpen(true)
-            }}
-          />
-        </div>
+        </main>
       </div>
 
       {notesOpen && ready && (

@@ -3,7 +3,7 @@
  *
  * 视觉编码：
  *   节点大小 = 传递入度（不用 LOC，见 ADR-005）
- *   节点颜色 = 顶层目录，前 3 个具名 + 其他（all-pairs 形态的色觉分离上限，ADR-011）
+ *   节点颜色 = 顶层目录，前 8 个具名 + 其他，身份仍由图例和文件路径说明
  *   红色描边 = 循环依赖（状态色配描边作二级编码，不靠颜色单独承载语义）
  *
  * 右下角是位置索引图（locator）：全图缩略 + 当前视口矩形，点击即可跳转。
@@ -18,7 +18,9 @@ import { aggregate } from '../core/aggregate'
 import { DEPTH_UNLIMITED, topLevelDir } from '../core/graph'
 import { isMatch, type MatchSet } from '../core/search'
 import type { FileNode } from '../core/types'
-import { ACCENT, HAIRLINE, INK, STATUS, SURFACE } from './palette'
+import { ACCENT, HAIRLINE, INK, INK_2, STATUS, SURFACE } from './palette'
+import { ControlGroup, DIRECTION_OPTIONS } from './Presentation'
+import { LABEL_FONT_FAMILY, LABEL_FONT_SIZE, labelCandidates, labelOpacity, paintLabels, placeLabels } from './nodeLabels'
 
 type CanvasNode = {
   id: string
@@ -116,11 +118,6 @@ function detachedOf(
   return new Set(nodes.map((n) => n.id).filter((id) => !main.has(id)))
 }
 
-const DIRECTION_OPTIONS: { value: Direction; label: string }[] = [
-  { value: 'dependents', label: '谁依赖它' },
-  { value: 'dependencies', label: '它依赖谁' },
-]
-
 const DEPTH_OPTIONS: { value: number; label: string }[] = [
   { value: 1, label: '1 跳' },
   { value: 2, label: '2 跳' },
@@ -164,10 +161,6 @@ function coreBoxFilter(
     n.y >= y0 &&
     n.y <= y1
 }
-
-/** 跳数越远越淡，让「先炸的」和「最终波及的」在一张图上分得开 */
-const RING_ALPHA = [1, 1, 0.72, 0.5]
-const ringAlpha = (hops: number) => RING_ALPHA[Math.min(hops, RING_ALPHA.length - 1)]
 
 /**
  * 两种淡化不是同一件事，所以不能用同一个透明度。
@@ -232,6 +225,7 @@ export function GraphCanvas({
 }) {
   const stageRef = useRef<HTMLDivElement>(null)
   const locatorRef = useRef<HTMLCanvasElement>(null)
+  const legendRef = useRef<HTMLDivElement>(null)
   const fgRef = useRef<ForceGraphMethods<CanvasNode, CanvasLink> | undefined>(undefined)
   /** 位置索引图的图坐标 → 索引图坐标变换，点击时用来反算 */
   const locatorTf = useRef<{ minX: number; minY: number; s: number; ox: number; oy: number } | null>(
@@ -608,8 +602,8 @@ export function GraphCanvas({
     if (hs === null || ht === null) return false
     /**
      * 边的方向是 source import target，两种关系模式下传播方向相反：
-     *   谁依赖它  影响沿反向传播 → 跳数(source) = 跳数(target) + 1
-     *   它依赖谁  阅读沿正向推进 → 跳数(target) = 跳数(source) + 1
+     *   被依赖  影响沿反向传播 → 跳数(source) = 跳数(target) + 1
+     *   依赖    阅读沿正向推进 → 跳数(target) = 跳数(source) + 1
      * 用错方向的话高亮出来的是一棵朝相反方向张开的树，看着「有反应」却全是错的。
      */
     return impact.direction === 'dependents' ? hs === ht + 1 : ht === hs + 1
@@ -619,6 +613,50 @@ export function GraphCanvas({
   const alphaOf = (id: string) => {
     if (!isMatch(matches, id)) return ALPHA_FILTERED
     return focused(id) ? 1 : ALPHA_UNFOCUSED
+  }
+
+  const namedNodes = useMemo(
+    () => labelCandidates(data.nodes, selected, impact, matches),
+    [data.nodes, selected, impact, matches]
+  )
+  // 字宽按固定屏幕字号缓存，不在每一帧重新量同一个文件名；换视图释放缓存。
+  const labelWidths = useMemo(() => new Map<string, number>(), [data.nodes])
+
+  const drawFileNames = (ctx: CanvasRenderingContext2D, scale: number) => {
+    const opacity = labelOpacity(scale)
+    const fg = fgRef.current
+    if (!selected || !fg || opacity === 0 || namedNodes.length === 0) return
+    const origin = fg.graph2ScreenCoords(0, 0)
+    ctx.save()
+    ctx.font = `${LABEL_FONT_SIZE}px ${LABEL_FONT_FAMILY}`
+    const measure = (text: string) => {
+      let width = labelWidths.get(text)
+      if (width === undefined) {
+        width = ctx.measureText(text).width
+        labelWidths.set(text, width)
+      }
+      return width
+    }
+    const labels = placeLabels({
+      nodes: namedNodes.map(n => ({
+        id: n.id, name: n.name,
+        x: (n.x ?? NaN) * scale + origin.x,
+        y: (n.y ?? NaN) * scale + origin.y,
+        r: (n.r + (n.id === selected ? 3.5 : showCycles && n.inCycle ? 1.6 : 0)) * scale,
+      })),
+      width: size.w, height: size.h, measure,
+      obstacles: [
+        // 留出图例和小地图的位置，窄屏的 8px 边距也包含在内。
+        { x: 0, y: size.h - (legendRef.current?.offsetHeight ?? 0) - 32,
+          width: (legendRef.current?.offsetWidth ?? 0) + 32, height: (legendRef.current?.offsetHeight ?? 0) + 32 },
+        { x: size.w - LOCATOR_W - 32, y: size.h - LOCATOR_H - 32,
+          width: LOCATOR_W + 32, height: LOCATOR_H + 32 },
+      ],
+    })
+    ctx.restore()
+    paintLabels(ctx, labels, {
+      scale, origin, opacity, selected, foreground: INK, secondary: INK_2, background: SURFACE,
+    })
   }
 
   /**
@@ -710,7 +748,112 @@ export function GraphCanvas({
   }, [])
 
   return (
-    <div className="panel canvas">
+    <div className="canvas">
+      <div className="canvas-tools" aria-label="图谱显示设置">
+        <ControlGroup label="显示粒度">
+          <div
+            className="segmented"
+            role="radiogroup"
+            aria-label="聚合粒度"
+            title="把文件折叠到第几层目录"
+          >
+            {GRAIN_OPTIONS.map((o) => (
+              <button
+                key={o.label}
+                role="radio"
+                aria-checked={grain === o.value}
+                className={grain === o.value ? 'is-on' : undefined}
+                onClick={() => setGrain(o.value)}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </ControlGroup>
+
+        {/*
+          关系方向。放在跳数控件前面——先问「看哪个方向」，再问「看几跳」，
+          这个顺序和用户脑子里的顺序一致。
+          没选中文件时禁用：两个控件都只作用于焦点文件，
+          让它们在无焦点时仍可点击，用户会以为点了没生效（I-11）。
+        */}
+        <ControlGroup label="关系方向">
+          <div
+            className={`segmented${selected ? '' : ' is-disabled'}`}
+            role="radiogroup"
+            aria-label="关系方向"
+            title={selected ? '看这个文件的哪一侧' : '先选中一个文件'}
+          >
+            {DIRECTION_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                role="radio"
+                aria-checked={direction === o.value}
+                disabled={!selected}
+                title={selected ? o.description : '先选中一个文件'}
+                className={direction === o.value ? 'is-on' : undefined}
+                onClick={() => onDirectionChange(o.value)}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+
+        </ControlGroup>
+        <ControlGroup label="关系范围">
+          <div
+            className={`segmented${selected ? '' : ' is-disabled'}`}
+            role="radiogroup"
+            aria-label="关系跳数"
+            title={selected ? '关系向外传播几跳' : '先选中一个文件'}
+          >
+            {DEPTH_OPTIONS.map((o) => (
+              <button
+                key={o.label}
+                role="radio"
+                aria-checked={depth === o.value}
+                disabled={!selected}
+                className={depth === o.value ? 'is-on' : undefined}
+                onClick={() => onDepthChange(o.value)}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </ControlGroup>
+        <ControlGroup label="显示选项">
+          <div className="control-options">
+            <label className={matches ? undefined : 'is-disabled'}>
+              <input
+                type="checkbox"
+                checked={isolate}
+                disabled={!matches}
+                onChange={(e) => setIsolate(e.target.checked)}
+              />
+              <span title={matches ? '只保留筛选命中的节点，重新布局' : '先设置筛选条件'}>仅显示筛选结果</span>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={showCycles}
+                onChange={(e) => setShowCycles(e.target.checked)}
+              />
+              标记循环文件
+            </label>
+          </div>
+        </ControlGroup>
+        <ControlGroup label="视图操作">
+          {/* 自动取景只框结构，这个按钮框全部——两种意图，各有各的场合 */}
+          <button
+            className="quiet"
+            onClick={() => fgRef.current?.zoomToFit(400, 60)}
+            title="框住全部节点，含孤岛"
+          >
+            适应视图
+          </button>
+        </ControlGroup>
+      </div>
+
       <div
         className="canvas-stage"
         ref={stageRef}
@@ -772,7 +915,9 @@ export function GraphCanvas({
             else fg.zoomToFit(500, 48)
           }}
           d3AlphaDecay={0.035}
-          onRenderFramePost={() => {
+          onRenderFramePost={(ctx, scale) => {
+            // 在节点和边之后统一绘制，优先级不依赖节点原本的遍历顺序。
+            drawFileNames(ctx, scale)
             // 隔帧重绘索引图，避免与主图争用绘制预算
             if (++frame.current % 2 === 0) drawLocator()
           }}
@@ -839,7 +984,6 @@ export function GraphCanvas({
           }}
           nodeCanvasObject={(node, ctx) => {
             const r = node.r
-            const hops = hopsOf(node.id)
             const isSel = node.id === selected
             /**
              * 基准透明度，**所有描边都要乘上它**。
@@ -860,17 +1004,6 @@ export function GraphCanvas({
             ctx.strokeStyle = SURFACE
             ctx.stroke()
 
-            // 影响范围主动加亮，而不是只靠别人变暗。环的深浅编码跳数
-            if (impact && hops !== null && !isSel) {
-              ctx.beginPath()
-              ctx.arc(node.x!, node.y!, r + 2.2, 0, 2 * Math.PI)
-              ctx.lineWidth = 1.4
-              ctx.globalAlpha = alpha * ringAlpha(hops)
-              ctx.strokeStyle = ACCENT
-              ctx.stroke()
-              ctx.globalAlpha = alpha
-            }
-
             if (showCycles && node.inCycle) {
               ctx.beginPath()
               ctx.arc(node.x!, node.y!, r + 1.6, 0, 2 * Math.PI)
@@ -889,9 +1022,7 @@ export function GraphCanvas({
               ctx.stroke()
             }
 
-            // 画布上不画文件名：悬停有提示框、选中有详情栏、侧栏有完整路径，
-            // 三处已经覆盖识别需求。在图上再挂一层文字只会遮挡结构，
-            // 而且力导向布局不保证节点不重叠，标签必然互相打架。
+            // 关联用节点/边的明暗区分，不再加蓝圈。文件名在帧末统一避让绘制。
             ctx.globalAlpha = 1
           }}
           nodePointerAreaPaint={(node, paintColor, ctx) => {
@@ -902,141 +1033,48 @@ export function GraphCanvas({
             ctx.fill()
           }}
         />
-      </div>
 
-      {/* 面板自身的圆角边框就是图幅内框线，不再单独画一层 */}
-      <div className="canvas-tools">
-        <div
-          className="segmented"
-          role="radiogroup"
-          aria-label="聚合粒度"
-          title="把文件折叠到第几层目录"
-        >
-          {GRAIN_OPTIONS.map((o) => (
-            <button
-              key={o.label}
-              role="radio"
-              aria-checked={grain === o.value}
-              className={grain === o.value ? 'is-on' : undefined}
-              onClick={() => setGrain(o.value)}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-
-        {/*
-          关系方向。放在跳数控件前面——先问「看哪个方向」，再问「看几跳」，
-          这个顺序和用户脑子里的顺序一致。
-          没选中文件时禁用：两个控件都只作用于焦点文件，
-          让它们在无焦点时仍可点击，用户会以为点了没生效（I-11）。
-        */}
-        <div
-          className={`segmented${selected ? '' : ' is-disabled'}`}
-          role="radiogroup"
-          aria-label="关系方向"
-          title={selected ? '看这个文件的哪一侧' : '先选中一个文件'}
-        >
-          {DIRECTION_OPTIONS.map((o) => (
-            <button
-              key={o.value}
-              role="radio"
-              aria-checked={direction === o.value}
-              disabled={!selected}
-              className={direction === o.value ? 'is-on' : undefined}
-              onClick={() => onDirectionChange(o.value)}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-
-        <div
-          className={`segmented${selected ? '' : ' is-disabled'}`}
-          role="radiogroup"
-          aria-label="关系跳数"
-          title={selected ? '关系向外传播几跳' : '先选中一个文件'}
-        >
-          {DEPTH_OPTIONS.map((o) => (
-            <button
-              key={o.label}
-              role="radio"
-              aria-checked={depth === o.value}
-              disabled={!selected}
-              className={depth === o.value ? 'is-on' : undefined}
-              onClick={() => onDepthChange(o.value)}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-        <label className={matches ? undefined : 'is-disabled'}>
-          <input
-            type="checkbox"
-            checked={isolate}
-            disabled={!matches}
-            onChange={(e) => setIsolate(e.target.checked)}
-          />
-          <span title={matches ? '只保留筛选命中的节点，重新布局' : '先筛选再隔离'}>隔离</span>
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={showCycles}
-            onChange={(e) => setShowCycles(e.target.checked)}
-          />
-          循环依赖
-        </label>
-        {/* 自动取景只框结构，这个按钮框全部——两种意图，各有各的场合 */}
-        <button
-          className="quiet"
-          onClick={() => fgRef.current?.zoomToFit(400, 60)}
-          title="框住全部节点，含孤岛"
-        >
-          适应窗口
-        </button>
-      </div>
-
-      {hovered && (
-        <>
-          <NodeChip node={hovered} pointer={pointer} bounds={size} />
-          <NodeDetails node={hovered} impact={impact} />
-        </>
-      )}
-
-      <div className="canvas-legend">
-        {matches && (
-          <span className="legend-item legend-filter">
-            {isolate ? '隔离中' : '筛选中'} <b>{matches.size}</b> / {nodes.length}
-          </span>
+        {hovered && (
+          <>
+            <NodeChip node={hovered} pointer={pointer} bounds={size} />
+            <NodeDetails node={hovered} impact={impact} />
+          </>
         )}
-        {legend.map((l) => {
-          const n = legendCounts.get(l.color) ?? 0
-          // 画面上一个都不剩的目录，图例里也不该占位置
-          if (n === 0) return null
-          return (
-            <span key={l.label} className="legend-item">
-              <i style={{ background: l.color }} />
-              {l.label} <b>{n}</b>
+
+        <div className="canvas-legend" ref={legendRef}>
+          {matches && (
+            <span className="legend-item legend-filter">
+              {isolate ? '隔离中' : '筛选中'} <b>{matches.size}</b> / {nodes.length}
             </span>
-          )
-        })}
-        {metrics.cycles.length > 0 && showCycles && (
-          <span className="legend-item">
-            <i className="legend-ring" style={{ borderColor: STATUS.critical }} />
-            {/* 单位是文件数，不是循环组数——抽屉导航里那个才是组数 */}
-            循环中 <b>{metrics.inCycle.size}</b> 个文件
-          </span>
-        )}
-      </div>
+          )}
+          {legend.map((l) => {
+            const n = legendCounts.get(l.color) ?? 0
+            // 画面上一个都不剩的目录，图例里也不该占位置
+            if (n === 0) return null
+            return (
+              <span key={l.label} className="legend-item">
+                <i style={{ background: l.color }} />
+                {l.label} <b>{n}</b>
+              </span>
+            )
+          })}
+          {metrics.cycles.length > 0 && showCycles && (
+            <span className="legend-item">
+              <i className="legend-ring" style={{ borderColor: STATUS.critical }} />
+              {/* 单位是文件数，不是循环组数——抽屉导航里那个才是组数 */}
+              循环中 <b>{metrics.inCycle.size}</b> 个文件
+            </span>
+          )}
+        </div>
 
-      <canvas
-        ref={locatorRef}
-        className="canvas-locator"
-        style={{ width: LOCATOR_W, height: LOCATOR_H }}
-        onClick={onLocatorClick}
-        title="点击跳转"
-      />
+        <canvas
+          ref={locatorRef}
+          className="canvas-locator"
+          style={{ width: LOCATOR_W, height: LOCATOR_H }}
+          onClick={onLocatorClick}
+          title="点击跳转"
+        />
+      </div>
     </div>
   )
 }
@@ -1080,8 +1118,8 @@ function NodeDetails({ node, impact }: { node: CanvasNode; impact: Impact | null
 
   return (
     <div className="canvas-tooltip">
-      <b>{node.name}</b>
-      {dir && <i>{dir}</i>}
+      <b className="tooltip-title">{node.name}</b>
+      {dir && <i className="tooltip-path">{dir}</i>}
       {node.isGroup ? (
         <span>
           <b>{node.files}</b> 个文件 · 内部 <b>{node.internal}</b> 条依赖 · 被外部引用{' '}
@@ -1109,7 +1147,11 @@ function RelationToSelection({ node, impact }: { node: CanvasNode; impact: Impac
   if (node.id === impact.root) return <em>当前选中</em>
 
   const hops = impact.depth.get(node.id)
-  if (hops == null) return <em className="muted">不受 {root} 影响</em>
+  if (hops == null) return (
+    <em className="muted">
+      {impact.direction === 'dependencies' ? `${root} 不依赖此文件` : `不受 ${root} 影响`}
+    </em>
+  )
 
   return (
     <em className={hops <= impact.maxDepth ? undefined : 'muted'}>
